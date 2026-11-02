@@ -7,3 +7,7 @@ _packaging/
 *.zip
 *.zip.sha256
 .claude/settings.local.json
+
+# Local handover task data created by the skill; never commit
+/handover.md
+/.handover/
