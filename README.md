@@ -2,7 +2,7 @@
 
 A Claude Code skill for carrying task state across sessions: manually **save** a verified handover, then **load** it in a fresh session or a parallel task.
 
-> Status: **v1.1.0-draft / trial candidate**. The skill is usable for small trials, but archive/restore, project isolation, 1.0.0 migration, and concurrency have not been fully end-to-end tested yet.
+> Status: **v1.1.0-rc.1 / release candidate**. Controlled trial only. Controlled fixture acceptance passed for archive/restore, project isolation, and 1.0-style migration; real business-project trials, real 1.0.0 artifacts, concurrency, and real permission modes remain untested.
 
 ## Why
 
@@ -60,6 +60,7 @@ save → confirm files and fingerprint → /clear → load → continue work →
 
 - Manual save and load; no automatic save, delete, `/clear`, or commit.
 - Project-local storage; no cross-project scanning and no global last-active pointer.
+- Target projects should ignore `.handover/` and `handover.md`; task files contain local absolute paths, and the skill does not auto-modify `.gitignore`.
 - Task identity is `task-id`, not the window.
 - `status` / `freshness` / `consistency` are separate:
   - `status`: in-progress / pending / blocked / paused / completed / cancelled;
@@ -78,7 +79,7 @@ handover/                  # the installable skill
 ├── references/task-template.md
 ├── CHECKLIST.md
 ├── SOURCES.md
-├── scripts/handover.py    # optional list / fingerprint / check
+├── scripts/handover.py    # optional list / fingerprint / check / ignore-check
 ├── VALIDATION.md
 ├── FIXTURE_TEST_RESULTS.md
 ├── E2E_TEST_RESULTS.md
@@ -101,19 +102,17 @@ python3 -I tests/validate_handover.py handover
 python3 -I tests/run_fixture_tests.py
 ```
 
-Current results:
+Current results (summary; the canonical scoped matrix is in `handover/E2E_TEST_RESULTS.md`):
 
 | Layer | Result |
 |---|---|
 | Static/structural | PASS, no errors |
-| Script fixtures | 13/13 PASS |
-| Real Claude Code E2E | save → load → modify → load passed after a scope fix |
-| Archive/restore E2E | Not executed |
-| Project isolation | Not executed |
-| Real 1.0.0 migration | Not executed |
-| Concurrency / real permission modes | Not executed |
+| Script fixtures | 19/19 PASS |
+| Real Claude Code E2E (minimal save/load/change) | PASS after a scope fix |
+| Controlled fixture acceptance (no-ID load, multi-turn, A/B isolation, archive/restore, 1.0-style migration) | PASS in temporary projects/fixtures |
+| Real business project, real 1.0.0 artifact, concurrency/real permission modes, full 70-item checklist | Not executed |
 
-See `handover/VALIDATION.md`, `handover/FIXTURE_TEST_RESULTS.md`, and `handover/E2E_TEST_RESULTS.md`.
+Controlled fixture acceptance is not a real-project trial; see `handover/VALIDATION.md`, `handover/FIXTURE_TEST_RESULTS.md`, and `handover/E2E_TEST_RESULTS.md` for scope and evidence.
 
 `SHA256SUMS.txt` verifies file digests only; it does not prove logic, installation, permissions, or safety.
 

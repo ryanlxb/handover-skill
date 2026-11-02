@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,7 @@ TASK_TEMPLATE = """---
 schema: 1
 snapshot_id: null
 task_id: login
+title: Login task
 status: in-progress
 updated_at: 2026-11-01T10:00:00+08:00
 migrated_at: null
@@ -47,29 +49,39 @@ fingerprint_checked_at: null
 """
 
 CASES: List[Dict[str, object]] = []
+TEMP_PATHS: List[Path] = []
 
 
 def run(args: List[str], cwd: Optional[Path] = None) -> Tuple[int, str, str]:
+    env = dict(os.environ)
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
     proc = subprocess.run(
         [sys.executable, "-I", str(SCRIPT)] + args,
         cwd=str(cwd) if cwd else None,
         capture_output=True,
         text=True,
+        env=env,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
 
 def git(root: Path, *args: str) -> Tuple[int, str, str]:
+    env = dict(os.environ)
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
     proc = subprocess.run(
         ["git", "-C", str(root)] + list(args),
         capture_output=True,
         text=True,
+        env=env,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
 
 def make_root(with_git: bool = True) -> Path:
     root = Path(tempfile.mkdtemp(prefix="handover-fixture-"))
+    TEMP_PATHS.append(root)
     (root / "src").mkdir()
     (root / ".handover").mkdir()
     (root / "src" / "login.ts").write_text("export const login = 1;\n", encoding="utf-8")
@@ -88,6 +100,7 @@ def make_root(with_git: bool = True) -> Path:
 def paths_file(root: Path, rels: List[str]) -> Path:
     path = root.parent / (root.name + "-paths.txt")
     path.write_text("\n".join(rels) + "\n", encoding="utf-8")
+    TEMP_PATHS.append(path)
     return path
 
 
@@ -276,7 +289,76 @@ def case_excluded_skill_docs() -> None:
            ok)
 
 
-def main() -> int:
+def case_list_title() -> None:
+    root = make_root()
+    code, out, err = run(["list", "--root", str(root)])
+    ok = code == 0 and "| login | Login task | in-progress |" in out
+    record("list 读取 frontmatter title", "title column contains Login task", code, out, err, ok)
+
+
+def case_list_title_fallback() -> None:
+    root = make_root()
+    task = root / ".handover" / "login.md"
+    text = task.read_text(encoding="utf-8")
+    text = text.replace("task_id: login", "task_id: no-title")
+    text = text.replace("title: Login task\n", "")
+    text = text.replace("status: in-progress", "status: pending")
+    (root / ".handover" / "no-title.md").write_text(text, encoding="utf-8")
+    code, out, err = run(["list", "--root", str(root)])
+    ok = code == 0 and "| no-title | no-title | pending |" in out
+    record("title 缺失时回退 task-id", "title falls back to no-title", code, out, err, ok)
+
+
+def case_ignore_check_ok() -> None:
+    root = make_root()
+    git(root, "rm", "-r", "--cached", "-q", ".handover")
+    (root / ".gitignore").write_text(".handover/\nhandover.md\n", encoding="utf-8")
+    code, out, err = run(["ignore-check", "--root", str(root)])
+    ok = (
+        code == 0
+        and "result: ok" in out
+        and ".handover/: ignored, not-tracked" in out
+        and "handover.md: ignored, not-tracked" in out
+    )
+    record("ignore-check: 已忽略且未跟踪", "ok, exit 0", code, out, err, ok)
+
+
+def case_ignore_check_warning() -> None:
+    root = make_root()
+    git(root, "rm", "-r", "--cached", "-q", ".handover")
+    code, out, err = run(["ignore-check", "--root", str(root)])
+    ok = (
+        code == 1
+        and "result: warning" in out
+        and ".handover/: not-ignored, not-tracked" in out
+        and "handover.md: not-ignored, not-tracked" in out
+    )
+    record("ignore-check: 未忽略", "warning, exit 1", code, out, err, ok)
+
+
+def case_ignore_check_tracked() -> None:
+    root = make_root()
+    (root / ".gitignore").write_text(".handover/\nhandover.md\n", encoding="utf-8")
+    git(root, "add", "-f", ".handover/login.md")
+    git(root, "commit", "-qm", "track task data")
+    code, out, err = run(["ignore-check", "--root", str(root)])
+    ok = (
+        code == 1
+        and "result: warning" in out
+        and ".handover/: ignored, tracked" in out
+        and "handover.md: ignored, not-tracked" in out
+    )
+    record("ignore-check: 已跟踪的任务数据", "warning, exit 1", code, out, err, ok)
+
+
+def case_ignore_check_not_git() -> None:
+    root = make_root(with_git=False)
+    code, out, err = run(["ignore-check", "--root", str(root)])
+    ok = code == 0 and "result: not-git" in out
+    record("ignore-check: 非 Git 项目", "not-git, exit 0", code, out, err, ok)
+
+
+def _run_tests() -> int:
     tests = [
         case_matched,
         case_snapshot_mismatch,
@@ -291,6 +373,12 @@ def main() -> int:
         case_no_git,
         case_sidecar_sha_mismatch,
         case_excluded_skill_docs,
+        case_list_title,
+        case_list_title_fallback,
+        case_ignore_check_ok,
+        case_ignore_check_warning,
+        case_ignore_check_tracked,
+        case_ignore_check_not_git,
     ]
     for test in tests:
         try:
@@ -308,7 +396,7 @@ def main() -> int:
             )
 
     passed = sum(1 for case in CASES if case["passed"])
-    print("# v1.1 Fixture Test Results")
+    print("# v1.1.0-rc.1 Fixture Test Results")
     print("")
     print("- Date (UTC): %s" % datetime.now(timezone.utc).isoformat(timespec="seconds"))
     try:
@@ -341,12 +429,30 @@ def main() -> int:
                 print(case["err"])
             print("```")
             print("")
-    print("## Not Executed")
+    print("## Not covered by these fixture tests")
     print("")
     print("- Claude Code skill installation, `/handover` invocation, `/clear`, and reload.")
     print("- Archive/restore file moves and entry-link updates.")
     print("- Concurrent writers and real permission behavior.")
     return 0 if not failures else 1
+
+
+def cleanup_temp_paths() -> None:
+    for path in reversed(TEMP_PATHS):
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
+        except OSError:
+            pass
+
+
+def main() -> int:
+    try:
+        return _run_tests()
+    finally:
+        cleanup_temp_paths()
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
-# Handover Skill v1.1.0-draft — Review Package
+# Handover Skill v1.1.0-rc.1 — Review Package
 
 - Date: 2026-11-02
-- Status: trial candidate; not a formal release
+- Status: release candidate; controlled trial only, not a stable release
 - Installable folder: `handover/`
 - Review-only file: this `REVIEW.md`
 
@@ -26,23 +26,25 @@
 1. `handover/README.md` — usage, boundaries, lifecycle.
 2. `handover/SKILL.md` — the actual instructions the model follows.
 3. `handover/references/task-template.md` — the task document schema.
-4. `handover/scripts/handover.py` — optional fingerprint/list/check helper.
+4. `handover/scripts/handover.py` — optional fingerprint/list/check/ignore-check helper.
 5. `handover/VALIDATION.md` — structural/static checks.
-6. `handover/FIXTURE_TEST_RESULTS.md` — 13 script-level cases.
+6. `handover/FIXTURE_TEST_RESULTS.md` — 19 script-level cases.
 7. `handover/E2E_TEST_RESULTS.md` — real Claude Code save/load/change chain.
 8. `handover/CHECKLIST.md` — remaining acceptance scenarios.
 
 ## Test status
 
+Status snapshot as of 2026-11-02. The canonical, scoped coverage matrix is in `handover/E2E_TEST_RESULTS.md`; this table is a summary, not a second source of truth.
+
 | Layer | Result |
 |---|---|
 | Structural/static (`VALIDATION.md`) | PASS; no errors |
-| Script fixture (`FIXTURE_TEST_RESULTS.md`) | 13/13 PASS |
-| Real Claude Code E2E (`E2E_TEST_RESULTS.md`) | save/load/change passed after a scope fix |
-| Archive/restore E2E | Not executed |
-| Project isolation | Not executed |
-| Real 1.0.0 migration | Not executed |
-| Concurrency / real permission modes | Not executed |
+| Script fixture (`FIXTURE_TEST_RESULTS.md`) | 19/19 PASS |
+| Real Claude Code E2E (minimal chain) | PASS after a scope fix |
+| Controlled fixture acceptance | PASS for no-ID load, multi-turn, A/B isolation, archive/restore, 1.0-style migration |
+| Real business project, real 1.0.0 artifact, concurrency/real permission modes, full 70-item checklist | Not executed |
+
+Controlled fixture acceptance used temporary projects and fixtures, not real business data or a real 1.0.0 artifact.
 
 ## Known caveats
 

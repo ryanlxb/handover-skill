@@ -2,6 +2,7 @@
 schema: 1
 snapshot_id: null
 task_id: <task-id>
+title: <任务标题>
 status: in-progress
 updated_at: 2026-11-02T10:30:00+08:00
 migrated_at: null

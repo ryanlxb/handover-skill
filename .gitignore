@@ -8,6 +8,16 @@ _packaging/
 *.zip.sha256
 .claude/settings.local.json
 
+# Common local secret files; never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+
 # Local handover task data created by the skill; never commit
 /handover.md
 /.handover/
