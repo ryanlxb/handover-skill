@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.DS_Store
+_extracted/
+_checks/
+_packaging/
+*.zip
+*.zip.sha256
+.claude/settings.local.json
