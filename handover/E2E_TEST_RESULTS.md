@@ -1,10 +1,37 @@
-# v1.1 Claude Code E2E Test Results
+# v1.1.0-rc.1 Claude Code E2E Test Results
 
 - Date: 2026-11-02
+- Version: v1.1.0-rc.1
 - Claude Code: 2.1.300
 - Model gateway: custom gateway (name withheld); the harness printed `unrecognized_model` at startup and execution continued.
 - Invocation: `claude -p "<slash command>" --permission-mode dontAsk --allowedTools "Read Write Edit Glob Grep Bash" --max-turns 30 --no-session-persistence`
 - Scope: minimal real save/load/change chain in temporary git projects. Fixture-level script tests are in `FIXTURE_TEST_RESULTS.md`; static checks are in `VALIDATION.md`.
+
+## Coverage summary
+
+This table is the canonical, scoped status summary for this report. Other documents should link here instead of restating a different status.
+
+| Layer | Scope | Result |
+|---|---|---|
+| Static / structural | `VALIDATION.md` | PASS; no errors |
+| Script fixtures | `FIXTURE_TEST_RESULTS.md` (19 cases) | 19/19 PASS |
+| Real Claude Code E2E | Minimal save → load → modify → load chain in temporary git projects | PASS after the `.claude/` scope fix |
+| Controlled fixture acceptance | Installed copy; temporary projects/fixtures: no-ID load matrix, multi-turn handover, A/B isolation, archive/restore, 1.0-style migration | PASS (see below) |
+| Real business project | Actual user project and data | Not executed |
+| Real 1.0.0 artifact migration | An actual 1.0.0 task file, not a 1.0-style fixture | Not executed |
+| Concurrency / real permission modes | Multiple writers, normal interactive permissions | Not executed |
+| Full `CHECKLIST.md` | All 70 items | Not executed |
+
+Controlled fixture acceptance is not a real-project trial. The 1.0-style migration below used a task file without YAML frontmatter; it is not evidence that an actual 1.0.0 file was migrated.
+
+## v1.1.0-rc.1 scope and limitations
+
+- Release candidate for controlled trial; not a stable release.
+- Verified on the installed copy with controlled temporary fixtures; not a real business project.
+- The 1.0-style migration fixture is not an actual 1.0.0 artifact.
+- Concurrency and normal interactive permission modes are not validated; do not run multiple writers on the same task.
+- `.claude/` is excluded from the fingerprint scope in this version; configuration changes under `.claude/` are outside consistency checks.
+- No full code audit or security guarantee. Static checks, checksums, fixtures, and E2E evidence have separate, bounded scopes.
 
 ## Projects
 
@@ -95,16 +122,120 @@ claude -p "/handover load demo" --permission-mode dontAsk \
 | Script examples used a relative `scripts/handover.py` path | Skill content now uses `${CLAUDE_SKILL_DIR}/scripts/handover.py`; fallback to `.claude/skills/handover/scripts/handover.py` |
 | First E2E record still has the old 3-file scope | It is a test artifact, not a released record; the second project verifies the fix |
 
-## Not Executed
+## Earlier minimal-chain coverage
 
-- `archive` / `restore` (including task + sidecar group moves and entry-link failure).
-- Project isolation with the same task-id in projects A and B.
-- Real 1.0.0 file migration.
-- Concurrent writers and real permission behavior.
-- Exact template-read tool call: the headless runs used `--no-session-persistence`, so no transcript was retained. The generated document matched the template structure, but this is evidence, not a captured tool call.
+The four cases above cover only save/load/change. Later sections add controlled fixture acceptance for archive/restore, A/B isolation, and 1.0-style migration. For the current overall scope, including what remains untested, use the coverage summary at the top and the remaining open items at the end. Do not read this earlier section as the current overall status.
 
 ## Caveats
 
 - The model gateway printed `[claude-code:unrecognized_model]` at startup. The skill still executed; this is a harness/model-identification warning, not a skill failure.
 - `--permission-mode dontAsk` with explicit `allowedTools` was used to make the headless run non-interactive. Real permission behavior in your normal sessions may differ.
-- These are real Claude Code runs, but they are not a substitute for the full acceptance sequence in `CHECKLIST.md`; archive/restore and project isolation remain open.
+- These are real Claude Code runs, but they are not a substitute for the full acceptance sequence in `CHECKLIST.md`; the candidate acceptance section below covers archive/restore, A/B isolation, and 1.0-style migration, while concurrency and real permission modes remain open.
+
+## v1.1.0-rc.1 candidate acceptance — installed copy (controlled fixtures)
+
+- Date: 2026-11-02
+- Claude Code: 2.1.300
+- Model gateway: custom gateway (name withheld); the harness printed `unrecognized_model` at startup and execution continued.
+- Invocation: `claude -p "<slash command>" --permission-mode dontAsk --allowedTools "Read Write Edit Glob Grep Bash" --max-turns 30 --no-session-persistence`.
+- Scope: controlled temporary Git projects; no real business data. Headless runs used `--no-session-persistence`, so exact tool-call transcripts were not retained.
+
+### Installation record
+
+| Item | Value |
+|---|---|
+| Installed path | `~/.claude/skills/handover/` |
+| Old-version backup | `~/.claude/handover-backups/handover-<UTC timestamp>/` |
+| Source | Repository working tree at `c309b8a` plus the candidate changes; not a committed tag |
+| Package checksums | `SHA256SUMS.txt` all OK in the installed copy |
+| `SKILL.md` SHA-256 | `6ce596c8fd3109cf925cd8113f370df47b50b0ac0dd80a678075dbd0e73f092f` |
+| `scripts/handover.py` SHA-256 | `e798c1c81b79aea3cae019dbc6a511ff1d9ee013a070516e71ef780d923700a2` |
+| Script path | `~/.claude/skills/handover/scripts/handover.py` (resolved from `${CLAUDE_SKILL_DIR}`; exact invocation not retained in the headless transcript) |
+| Repo/install alignment | Installed `SKILL.md` and `handover.py` hashes match the repository working tree |
+
+### No-ID load matrix
+
+| Case | Fixture | Expected | Actual | Result |
+|---|---|---|---|---|
+| Unique fresh `in-progress` | One task `alpha`, `in-progress`, fresh | Auto-select, verify, no auto-development | Selected `alpha`; reported goal/constraints; read-only; no development | PASS |
+| Unique fresh `paused` | One task `beta`, `paused`, fresh | List candidate, no auto-select | Listed `beta` as paused; did not select | PASS |
+| Unique stale `in-progress` | One task `gamma`, `in-progress`, 30 days old | List candidate, no auto-select | Marked `gamma` stale; did not select | PASS |
+| Multiple `in-progress` | `delta` (2h old) and `epsilon` (1h old) | List both, no recency-based selection | Listed both; did not select by updated_at | PASS |
+
+### Multi-turn handover integrity
+
+- Scenario: one process received requirements, a correction, decisions, and todos; it ran `save demo`. A separate process (equivalent to `/clear`) ran `load demo`.
+- Restored: original request, authoritative correction, SQLite decision, deferred OAuth/SSO, two todos, and six open questions explicitly marked as not approved.
+- Status remained `pending`; `load` was read-only; `check` returned `consistency: matched` (1 file, 0 git entries).
+- Result: PASS; the load did not auto-start implementation.
+
+### A/B project isolation
+
+- Projects A and B each contained a task with the same task-id `demo` but different titles.
+- `load demo` in each project reported its own title and project root; neither read the other project's task.
+- Result: PASS.
+
+### Archive / restore
+
+- Fixture: completed task `done-task` with a bound fingerprint sidecar.
+- Archive moved Markdown and sidecar as one record group, set `archived_at`, kept `updated_at` unchanged, updated `fingerprint_file`, and updated the entry.
+- Restore moved both files back, set status to `paused`, recorded `restored_at`, preserved `archived_at` and `updated_at`, kept `fingerprint_sha256` unchanged, and updated the entry.
+- `check` returned `consistency: matched` before and after; no baseline was regenerated.
+- Result: PASS.
+
+### 1.0-style migration (fixture)
+
+- Fixture: a task file without YAML frontmatter; this is not an actual 1.0.0 artifact.
+- `save legacy` added `schema: 1`, `title`, `status: unknown`, `updated_at: null`, and `migrated_at`; it did not default the status to `in-progress` and did not use the migration time as `updated_at`.
+- Body content was preserved, but one extra leading blank line was added after the frontmatter (271 bytes vs 270 bytes). The run claimed "byte-identical, 230 bytes"; that claim was inaccurate.
+- `list` placed the record in `EXCEPTIONS` with `status unknown`; explicit `load legacy` reported the unknown status and did not auto-activate it; `check` returned `consistency: matched`.
+- Result: PASS with a minor formatting/reporting finding. No record content was lost.
+
+### Remaining open items
+
+- Real business-project trial (actual project and data).
+- Real 1.0.0 artifact migration (the migration above used a 1.0-style fixture).
+- Concurrency and real interactive permission modes.
+- Full 70-item `CHECKLIST.md` execution.
+- Exact tool-call transcript capture for template reads and helper invocations.
+
+## v1.1.0-rc.1 release binding
+
+- Release: `v1.1.0-rc.1` — release candidate, controlled trial only.
+- Installed path: `~/.claude/skills/handover/`
+- Previous-copy backup: `~/.claude/handover-backups/handover-20261102T090750Z/`
+- Package checksums: `shasum -a 256 -c SHA256SUMS.txt` all OK in the installed copy.
+
+### Protocol delta since the earlier E2E run
+
+The earlier E2E install record used `SKILL.md` `6ce596c8…f092f`; this RC uses `32fb7a4a…994d`. The delta is:
+
+- Added the Git ignore/tracked check: `ignore-check` helper plus `save`/`archive`/`restore` reminders.
+- Narrowed the save-time `check` claim: it compares the current scene with the just-generated baseline; it does not prove the narrative semantically matches the code or that code was unchanged while the body was composed.
+- Added the RC version labels and the scope/limitations section.
+- The `load` selection logic and archive/restore record-group rules are unchanged; the final package was smoke-tested again below.
+
+### Final package key hashes
+
+| File | SHA-256 |
+|---|---|
+| `SKILL.md` | `32fb7a4a198fb0e3140b7ba2c41e550adcc66f908b7aa24f1329fd75fe4a994d` |
+| `scripts/handover.py` | `be63a78545aa208bc5892603842a7c6d8431151e4c94fe8c9c5962e8ff807e1a` |
+| `README.md` | `9a137e4502b6becdcdd21face8091b7c996545a2687acd026b952b70ecef9736` |
+| `CHECKLIST.md` | `90a078d6a039da1e1303cb509fffebaf5e824b2d467166acbd316893d973e7e4` |
+
+### Final smoke tests (installed RC)
+
+- **Minimal save/load**: `save rc-smoke` created the task, sidecar, and entry; `check` returned `consistency: matched` (1 file, 0 git entries). A fresh-process `load rc-smoke` reported `matched`, restored the goal, and remained read-only.
+- **Ignore check**: the fixture had no `.gitignore`; `ignore-check` correctly returned `warning` (`not-ignored, not-tracked`) and did not modify `.gitignore`.
+- **No-ID selection**: the unique fresh `in-progress` fixture (`alpha`) was auto-selected; the load was read-only.
+- **Fixture suite**: 19/19 PASS, including four `ignore-check` cases.
+- **Static validator**: PASS, no errors.
+
+### RC caveats
+
+- These are controlled temporary fixtures, not a real business-project trial.
+- The 1.0-style migration fixture is not an actual 1.0.0 artifact.
+- Concurrency and normal interactive permission modes are not validated; do not run multiple writers on the same task.
+- The 70-item `CHECKLIST.md` is not fully executed.
+- Headless runs used `--permission-mode dontAsk` and the configured custom gateway, which printed `unrecognized_model`; results are behavioral evidence for this environment, not a guarantee across models/permissions.

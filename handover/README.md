@@ -1,6 +1,6 @@
 # Handover Skill
 
-版本：1.1.0-draft
+版本：1.1.0-rc.1
 
 用途：把当前会话的任务状态保存到项目本地，让新会话核验后继续，或只加载背景开始新任务。不是聊天记录备份，也不是代码备份。
 
@@ -21,7 +21,7 @@
 
 最终必须存在 `.../skills/handover/SKILL.md`。不要再套一层 handover。若已有同名 Skill，先自行备份再替换。
 
-**测试 1.1 草稿时建议项目级安装，或临时把 name 改为 `handover-v11`，不要覆盖正在使用的 1.0.0。**
+**安装 1.1.0-rc.1 时建议先备份现有 Skill；若要并行试用，可用项目级安装或临时改 name，不要直接覆盖正在使用的稳定版。**
 
 全局安装只是所有项目共用规则；任务数据仍分别存放在各项目，不存入全局 Skill 目录。
 
@@ -38,12 +38,12 @@
 ```
 
 - save：保存当前会话中该任务的目标、状态和证据，不保存完整窗口。成功后输出精确的 `/handover load <task-id>`。
-- list：默认只列活跃状态；`--all` 含已结束与归档，并显示被隐藏数量；另有“待识别记录”区域。
+- list：默认只列活跃状态；`--all` 含已结束与归档，并显示被隐藏数量；另有“待识别记录”区域。标题取 frontmatter 的 `title`，缺失时回退显示 task-id（不读正文）。
 - load：只恢复并核验，不自动继续开发；不改变 status 或 `updated_at`。
 - brief：了解当前项目背景，不执行旧任务。
 - archive：默认只归档 completed/cancelled；不删除，更新入口链接。
 - restore：恢复归档到当前记录区，状态为 paused；需重新 `load` 核验后再继续。
-- 不带参数默认 save；不带 ID 的 load 仅在“唯一活跃任务且 freshness=fresh”时自动选择，多个或 stale/unknown 时列候选。
+- 不带参数默认 save；不带 ID 的 load 仅在“唯一 in-progress 任务且 freshness=fresh”时自动选择；多个 in-progress、stale/unknown、或只有 pending/blocked/paused 时列候选，不自动选择；只有 completed/cancelled/归档（或没有任何任务）时提示没有进行中任务。fresh 只允许自动选择，不跳过 consistency 核验，也不自动开发。
 - task-id 允许 1–64 位小写字母、数字和短横线，首位必须是字母或数字。保留字 save/load/brief/list/archive/restore 不能作为 task-id。
 - `/handover login` 是 `/handover save login` 的简写。
 
@@ -93,6 +93,9 @@ project-b/
 
 两个 login 不冲突。在 A 中不会默认搜索 B。Git 项目默认按当前工作树根目录隔离；monorepo 默认视为一个项目，除非用户明确指定子项目根目录。worktree 默认各用本地文件，不自动同步；需要跨 worktree 时由用户明确搬运并核验 branch/HEAD。
 
+- Git 项目使用本 Skill 时，必须把 `.handover/` 和 `handover.md` 加入项目 `.gitignore`，并确认它们未被 Git 跟踪；仅存在忽略规则不足以证明不会被提交。任务 frontmatter 含本地绝对路径；提交任务数据会泄露本机路径和任务上下文。Skill 不会自动修改 `.gitignore` 或执行 `git rm`，但 `save` 会提醒未忽略或已被跟踪的路径。
+- 可用 `scripts/handover.py ignore-check --root <项目根>` 做确定性检查：exit 0 = ok/not-git；1 = warning（至少一个未忽略或已被跟踪）；2 = unknown。该命令只读，不修改 `.gitignore`，也不执行 `git rm`。
+
 ## 任务状态
 
 | 状态 | 含义 |
@@ -127,10 +130,10 @@ project-b/
 仅比较 branch/HEAD/worktree/dirty 状态不足以证明内容一致：同一 branch、同一 HEAD、同样“有未提交修改”，文件内容仍可能已经变化。因此 v1.1 使用内容指纹：
 
 - 保存时记录声明范围内文件的内容 SHA-256，以及相关 git 现场（branch、HEAD、status 条目），写入 `.handover/<task-id>.fingerprint.json`；sidecar 的 SHA-256 写入任务 frontmatter 的 `fingerprint_sha256`。
-- 声明范围 = 任务相关文件 + `接手必读` 路径 + 显式提到路径 + 这些路径所在目录；排除 `.handover/`、`handover.md`、`.claude/` 和 `.git/`，避免 save 自己或 Skill 安装目录改变现场。
+- 声明范围 = 任务相关文件 + `接手必读` 路径 + 显式提到路径 + 这些路径所在目录；排除 `.handover/`、`handover.md`、`.claude/` 和 `.git/`，避免 save 自己或 Skill 安装目录改变现场。当前版本默认排除整个 `.claude/`：`.claude/` 下的项目配置变化不在一致性检查范围内；这不是“所有项目配置都不属于任务现场”的断言。
 - git 现场覆盖声明范围内的新增、删除、重命名、暂存/未暂存状态变化；范围外改动只计数，不参与 matched 判断。
 - 任务 frontmatter 与 sidecar 共享 `snapshot_id`。`check` 先核对 `snapshot_id`、`fingerprint_file`、`fingerprint_sha256` 是否属于同一次保存；不匹配 → unknown。正文已更新但指纹仍是旧值时，不会伪装成 matched。
-- 指纹生成后必须再跑一次 `check`，确认正文写完到指纹生成之间代码没有被再次修改；若返回 changed，报告“快照期间代码变化”，不要宣称干净保存。
+- 指纹生成后必须再跑一次 `check`，确认检查时现场与刚生成的基线一致，并确认任务文件与 sidecar 的 `snapshot_id`/SHA 绑定一致；若返回 changed，报告“检查时现场与基线不一致”，不要宣称干净保存。它不证明正文语义与代码一致，也不证明正文整理期间代码始终未变。
 - 结果优先级：已发现明确差异（内容或 git）→ changed，并注明检查是否不完整；未发现明确差异但检查不完整 → unknown；检查完整且无差异 → matched。
 - `matched` 只表示“声明的检查范围内一致”，不是整个项目一致。
 - 优先用 `scripts/handover.py` 生成和核对；脚本不可用时 `snapshot_id`/`fingerprint_file`/`fingerprint_sha256` 置 null，consistency 必须为 unknown，不得用 branch/HEAD 代替内容指纹。
@@ -166,7 +169,10 @@ project-b/
 - 本 Skill 不配置启动时注入，也不主动批量加载交接记录；其他项目指令、导入、hook 或用户要求仍可能导致文件被读取。
 - `handover.md` 是普通文件，不是 `CLAUDE.md`/`AGENTS.md`；Claude Code 不会仅因它存在而通过本 Skill 加载它。
 - `save`/`brief`/`load` 在各自流程中会按需读取相关任务文件；这不是权限隔离。
-- `list` 只读任务 frontmatter（当前是指令；如需确定性，使用 `scripts/handover.py list`）。
+- `list` 只读任务 frontmatter（当前是指令；如需确定性，使用 `scripts/handover.py list`）；标题取 frontmatter `title`，缺失时回退显示 task-id，不读正文。
+- `load` 的一致性核验优先运行 `scripts/handover.py check`，只读取其精简结果；完整 sidecar 留在磁盘，排错时再读。
+- 本 Skill 不主动把任务进度写入长期记忆（Auto Memory / memory 文件）；但 Auto Memory、`CLAUDE.md`、其他规则和 hook 仍可能把旧信息带入新会话，需另行检查。
+- 同一会话连续 `load` 不同任务时，先前任务正文仍在上下文中；切换不相关任务优先新会话或先 `/clear` 再 `load`。归档、删除任务文件或加载另一任务都不会撤回已读内容。
 - 不要把 `handover.md` 用 `@handover.md` import 进 `CLAUDE.md`；不要在 `SessionStart` hook 注入全文；最多注入一行“有 in-progress 任务，是否 load”。
 - 没有后台计时器；所有检查只在命令调用时发生。
 - 干净测试环境的验收：在没有额外导入、hook 或读取要求时，启动后没有由本 Skill 注入的交接正文；这不构成对所有环境的绝对保证。
@@ -180,7 +186,8 @@ project-b/
   - status 无法确认时写 unknown，不默认 in-progress。
   - 迁移不是实质核验；不更新 `updated_at`。
 - 未支持 schema 只读并告警；不自动降级覆盖。
-- `archive`/`restore` 只处理 schema 1；旧文件先按上述规则迁移，或由用户明确选择并承担校验。
+- `archive`/`restore` 只处理 schema 1；旧文件必须先按上述规则完成迁移，再执行 archive/restore。用户授权不能替代格式和路径校验。
+- 报告使用“正文内容保留”；只有实际做过字节比较时才可写“字节一致”。
 
 ## YAML 与配置校验
 
@@ -190,7 +197,7 @@ project-b/
 - `stale_after_days` 必须是合法正整数；无效配置告警后使用默认 14。
 - 模板中的示例日期仅作格式示例，不得原样写入真实任务。
 
-## 待验证项（v1.1-draft）
+## 待验证项（v1.1.0-rc.1）
 
 - 模板路径：`SKILL.md` 仍使用 `references/task-template.md` 内联引用。2026-11-02 的最小 E2E 从非 Skill 所在目录启动，仍生成了完整模板结构，说明模板读取很可能成功；但该次运行禁用了会话持久化，没有保留精确工具调用，因此仍标为“待确认”。若后续失败，再改成 Markdown 链接或 `${CLAUDE_SKILL_DIR}`。本 draft 不预设修改。
 - 文档长度：先观察真实任务文档的行数与内容；只有确实重复 specs/diffs/代码或明显膨胀时，才加软性 guideline。本 draft 不设硬性 100–200 行限制。
@@ -199,7 +206,7 @@ project-b/
 
 ## 测试声明
 
-当前完成设计评审、结构/静态检查、脚本 fixture 测试，以及最小 Claude Code E2E（save → load → 改代码 → load 检出变化）；结果见 `VALIDATION.md`、`FIXTURE_TEST_RESULTS.md`、`E2E_TEST_RESULTS.md`。archive/restore、项目隔离、旧文件迁移、并发尚未执行，不能把已有结果当作完整端到端通过。
+当前完成设计评审、结构/静态检查、脚本 fixture 测试、最小 Claude Code E2E（save → load → 改代码 → load 检出变化），以及受控夹具验收（无 ID load 矩阵、多轮交接、A/B 隔离、archive/restore、1.0 风格迁移）；结果见 `VALIDATION.md`、`FIXTURE_TEST_RESULTS.md`、`E2E_TEST_RESULTS.md`。受控夹具验收不是真实业务项目试用；真实业务项目、真实 1.0.0 制品、并发/真实权限模式与完整 70 项 checklist 尚未执行，不能把已有结果当作完整端到端通过。
 
 - `SHA256SUMS.txt` 只证明列入清单的文件与对应摘要一致，不证明逻辑正确、安装成功、权限安全或真实行为。
 - 截断标记检查是启发式，不等于自然语言绝无残句；聊天输出可能被截断，以磁盘文件和真实调用结果为准。
@@ -224,7 +231,7 @@ project-b/
 - `references/task-template.md`：任务文档结构（YAML frontmatter + 正文）。
 - `CHECKLIST.md`：首次使用验收场景。
 - `SOURCES.md`：官方参考链接。
-- `scripts/handover.py`：可选的 list / fingerprint / check 工具。
+- `scripts/handover.py`：可选的 list / fingerprint / check / ignore-check 工具。
 - `VALIDATION.md`：结构/静态检查结果。
 - `FIXTURE_TEST_RESULTS.md`：脚本 fixture 测试结果（与 Claude Code 端到端测试分开）。
 - `E2E_TEST_RESULTS.md`：Claude Code 真实 save/load/change 链路结果（与 fixture 测试分开）。

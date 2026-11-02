@@ -4,11 +4,16 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -16,3 +21,11 @@ jobs:
         run: python3 -I tests/validate_handover.py handover
       - name: Fixture tests
         run: python3 -I tests/run_fixture_tests.py
+      - name: Verify package checksums
+        working-directory: handover
+        run: sha256sum -c SHA256SUMS.txt
+      # Pinned gitleaks image; bump deliberately and re-verify the digest.
+      - name: Secret scan (git history)
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.27.2@sha256:ebfeb6fd4f2c37fa371d3731ebfa662fdf80f93cd37d3b4771bb82263edff8d0 detect --source=/repo --redact --verbose
+      - name: Secret scan (working tree)
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.27.2@sha256:ebfeb6fd4f2c37fa371d3731ebfa662fdf80f93cd37d3b4771bb82263edff8d0 detect --source=/repo --no-git --redact --verbose

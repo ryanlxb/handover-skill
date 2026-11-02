@@ -28,7 +28,7 @@ python3 -I tests/run_fixture_tests.py
 
 `validate_handover.py` checks required files, frontmatter keys, code-fence balance, local Markdown links, truncation markers, and Python syntax. It prints a Markdown report and exits non-zero on errors.
 
-`run_fixture_tests.py` runs 13 cases against `handover/scripts/handover.py` in temporary git and non-git projects. It prints a Markdown report and exits non-zero on failures. There is no single-case flag; run the full suite, or temporarily narrow the `tests` list in `tests/run_fixture_tests.py` when debugging one case.
+`run_fixture_tests.py` runs 19 cases against `handover/scripts/handover.py` in temporary git and non-git projects. It prints a Markdown report and exits non-zero on failures. There is no single-case flag; run the full suite, or temporarily narrow the `tests` list in `tests/run_fixture_tests.py` when debugging one case.
 
 ### Helper CLI
 
@@ -37,9 +37,12 @@ python3 -I handover/scripts/handover.py --help
 python3 -I handover/scripts/handover.py list --root <project> --all
 python3 -I handover/scripts/handover.py fingerprint --root <project> --task <id> --paths <paths-file>
 python3 -I handover/scripts/handover.py check --root <project> --task <id> --task-file <task.md>
+python3 -I handover/scripts/handover.py ignore-check --root <project>
 ```
 
 `check` exit codes: `0` = matched, `1` = changed, `2` = unknown or error.
+
+`ignore-check` exit codes: `0` = ok or not a Git work tree, `1` = warning, `2` = unknown or error.
 
 ### Regenerate committed reports and checksums
 

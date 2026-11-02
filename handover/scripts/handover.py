@@ -22,6 +22,10 @@ check --root ROOT --task TASK [--task-file FILE] [--sidecar SIDECAR]
       no definite change + incomplete -> unknown
       complete + no change -> matched
 
+ignore-check --root ROOT
+    Check whether .handover/ and handover.md are both ignored by Git and not
+    tracked. Exit 0 = ok or not a git work tree; 1 = warning; 2 = unknown.
+
 This script never modifies task files or business files. It only writes the
 fingerprint sidecar requested by `fingerprint`. Requires Python 3.9+.
 """
@@ -365,6 +369,85 @@ def git_snapshot(root: Path, scope_paths: List[str], scope_dirs: List[str]) -> D
     }
 
 
+def git_check_ignore(root: Path, rel: str) -> Tuple[Optional[bool], Optional[str]]:
+    """Return (ignored, error) for one path, using `git check-ignore`."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "--no-index", "-q", "--", rel],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, str(exc)
+    if proc.returncode == 0:
+        return True, None
+    if proc.returncode == 1:
+        return False, None
+    return None, proc.stderr.strip() or ("exit %d" % proc.returncode)
+
+
+def git_is_tracked(root: Path, rel: str) -> Tuple[Optional[bool], Optional[str]]:
+    """Return (tracked, error) for one path, using `git ls-files`."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--error-unmatch", "--", rel],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, str(exc)
+    if proc.returncode == 0:
+        return True, None
+    if proc.returncode == 1:
+        return False, None
+    return None, proc.stderr.strip() or ("exit %d" % proc.returncode)
+
+
+def cmd_ignore_check(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    inside, error = run_git(root, ["rev-parse", "--is-inside-work-tree"])
+    if error or (inside or "").strip() != "true":
+        print("git: false")
+        if error:
+            print("reason: %s" % error)
+        print("result: not-git")
+        return 0
+
+    targets = [(".handover/", ".handover"), ("handover.md", "handover.md")]
+    results: List[Tuple[str, str, str]] = []
+    unknown = False
+    warning = False
+    for display, rel in targets:
+        ignored, ignore_error = git_check_ignore(root, rel)
+        tracked, tracked_error = git_is_tracked(root, rel)
+        if ignored is None or tracked is None:
+            unknown = True
+            results.append((display, "unknown", "unknown"))
+            for reason in (ignore_error, tracked_error):
+                if reason:
+                    print("reason: %s" % reason)
+            continue
+        ignore_label = "ignored" if ignored else "not-ignored"
+        tracked_label = "tracked" if tracked else "not-tracked"
+        if not ignored or tracked:
+            warning = True
+        results.append((display, ignore_label, tracked_label))
+
+    print("git: true")
+    for display, ignore_label, tracked_label in results:
+        print("%s: %s, %s" % (display, ignore_label, tracked_label))
+    if unknown:
+        print("result: unknown")
+        return 2
+    if warning:
+        print("result: warning")
+        return 1
+    print("result: ok")
+    return 0
+
+
 def cmd_fingerprint(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     task = args.task
@@ -619,10 +702,10 @@ def cmd_list(args: argparse.Namespace) -> int:
     if config_warning:
         print("warning: %s" % config_warning, file=sys.stderr)
 
-    active_rows: List[Tuple[str, str, str, str, str]] = []
-    exception_rows: List[Tuple[str, str, str, str, str]] = []
-    ended_rows: List[Tuple[str, str, str, str]] = []
-    archived_rows: List[Tuple[str, str, str, str]] = []
+    active_rows: List[Tuple[str, str, str, str, str, str]] = []
+    exception_rows: List[Tuple[str, str, str, str, str, str]] = []
+    ended_rows: List[Tuple[str, str, str, str, str]] = []
+    archived_rows: List[Tuple[str, str, str, str, str]] = []
     ended_count = 0
     archived_count = 0
     seen: Dict[str, str] = {}
@@ -631,9 +714,10 @@ def cmd_list(args: argparse.Namespace) -> int:
         rel = str(path.relative_to(root))
         data, status = read_frontmatter(path)
         if data is None:
-            exception_rows.append((path.stem, "unknown", "-", "frontmatter: %s" % status, rel))
+            exception_rows.append((path.stem, path.stem, "unknown", "-", "frontmatter: %s" % status, rel))
             continue
         task_id = str(data.get("task_id") or "")
+        title = str(data.get("title") or task_id or path.stem)
         task_status = str(data.get("status") or "unknown")
         updated_at = data.get("updated_at")
         fresh = freshness(updated_at if isinstance(updated_at, str) else None, stale_days)
@@ -654,15 +738,15 @@ def cmd_list(args: argparse.Namespace) -> int:
         if task_status not in KNOWN_STATUS:
             reasons.append("unknown status")
         if reasons:
-            exception_rows.append((task_id or path.stem, task_status, fresh, "; ".join(reasons), rel))
+            exception_rows.append((task_id or path.stem, title, task_status, fresh, "; ".join(reasons), rel))
         elif task_status in ACTIVE:
-            active_rows.append((task_id, task_status, fresh, str(updated_at or "-"), rel))
+            active_rows.append((task_id, title, task_status, fresh, str(updated_at or "-"), rel))
         elif task_status in ENDED:
             ended_count += 1
             if include_archive:
-                ended_rows.append((task_id, task_status, str(updated_at or "-"), rel))
+                ended_rows.append((task_id, title, task_status, str(updated_at or "-"), rel))
         else:
-            exception_rows.append((task_id or path.stem, task_status, fresh, "status unknown", rel))
+            exception_rows.append((task_id or path.stem, title, task_status, fresh, "status unknown", rel))
 
     archive = root / ".handover" / "archive"
     if archive.is_dir():
@@ -675,29 +759,30 @@ def cmd_list(args: argparse.Namespace) -> int:
             data, status = read_frontmatter(path)
             rel = str(path.relative_to(root))
             if data is None:
-                archived_rows.append((path.stem, "unknown", "-", "%s (frontmatter: %s)" % (rel, status)))
+                archived_rows.append((path.stem, path.stem, "unknown", "-", "%s (frontmatter: %s)" % (rel, status)))
                 continue
             task_id = str(data.get("task_id") or path.stem)
+            title = str(data.get("title") or task_id)
             task_status = str(data.get("status") or "unknown")
             updated_at = data.get("updated_at") or "-"
-            archived_rows.append((task_id, task_status, str(updated_at), rel))
+            archived_rows.append((task_id, title, task_status, str(updated_at), rel))
 
     print("## ACTIVE")
     if active_rows:
-        print("| task | status | freshness | updated_at | path |")
-        print("|---|---|---|---|---|")
+        print("| task | title | status | freshness | updated_at | path |")
+        print("|---|---|---|---|---|---|")
         for row in sorted(active_rows):
-            print("| %s | %s | %s | %s | %s |" % row)
+            print("| %s | %s | %s | %s | %s | %s |" % row)
     else:
         print("(none)")
 
     print("")
     print("## EXCEPTIONS")
     if exception_rows:
-        print("| task | status | freshness | reason | path |")
-        print("|---|---|---|---|---|")
+        print("| task | title | status | freshness | reason | path |")
+        print("|---|---|---|---|---|---|")
         for row in exception_rows:
-            print("| %s | %s | %s | %s | %s |" % row)
+            print("| %s | %s | %s | %s | %s | %s |" % row)
     else:
         print("(none)")
 
@@ -705,19 +790,19 @@ def cmd_list(args: argparse.Namespace) -> int:
         print("")
         print("## ENDED")
         if ended_rows:
-            print("| task | status | updated_at | path |")
-            print("|---|---|---|---|")
+            print("| task | title | status | updated_at | path |")
+            print("|---|---|---|---|---|")
             for row in ended_rows:
-                print("| %s | %s | %s | %s |" % row)
+                print("| %s | %s | %s | %s | %s |" % row)
         else:
             print("(none)")
         print("")
         print("## ARCHIVED")
         if archived_rows:
-            print("| task | status | updated_at | path |")
-            print("|---|---|---|---|")
+            print("| task | title | status | updated_at | path |")
+            print("|---|---|---|---|---|")
             for row in archived_rows:
-                print("| %s | %s | %s | %s |" % row)
+                print("| %s | %s | %s | %s | %s |" % row)
         else:
             print("(none)")
     else:
@@ -754,6 +839,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--expected-sha256")
     p_check.add_argument("--expected-snapshot-id")
     p_check.set_defaults(func=cmd_check)
+
+    p_ignore = sub.add_parser("ignore-check", help="check task data is ignored and untracked")
+    p_ignore.add_argument("--root", required=True)
+    p_ignore.set_defaults(func=cmd_ignore_check)
     return parser
 
 

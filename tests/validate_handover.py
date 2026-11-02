@@ -32,6 +32,7 @@ TEMPLATE_KEYS = [
     "schema",
     "snapshot_id",
     "task_id",
+    "title",
     "status",
     "updated_at",
     "migrated_at",
@@ -185,7 +186,7 @@ def main() -> int:
                 warnings.append("README.md: does not reference E2E_TEST_RESULTS.md")
         files_report.append((rel, lines, size, "OK" if ok_fences else "FENCE-ERROR"))
 
-    print("# v1.1-draft Validation Report")
+    print("# v1.1.0-rc.1 Validation Report")
     print("")
     print("- Date (UTC): %s" % datetime.now(timezone.utc).isoformat(timespec="seconds"))
     print("- Target: `%s`" % target_arg)
@@ -229,7 +230,7 @@ def main() -> int:
     print("- This validator does not install or execute the skill.")
     print("- Skill invocation and the minimal save/load/change chain: see `E2E_TEST_RESULTS.md`.")
     print("- Script fixture semantics: see `FIXTURE_TEST_RESULTS.md`.")
-    print("- Archive/restore, project isolation, 1.0.0 migration, concurrency: not executed.")
+    print("- Current dynamic coverage, including controlled fixture acceptance: see `E2E_TEST_RESULTS.md`.")
     print("")
     print("Static checks do not replace end-to-end acceptance.")
 

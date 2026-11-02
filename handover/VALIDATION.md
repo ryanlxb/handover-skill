@@ -1,6 +1,6 @@
-# v1.1-draft Validation Report
+# v1.1.0-rc.1 Validation Report
 
-- Date (UTC): 2026-11-02T03:38:54+00:00
+- Date (UTC): 2026-11-02T09:13:45+00:00
 - Target: `handover`
 - Scope: structural/static checks only; no installation, no skill execution.
 
@@ -8,13 +8,13 @@
 
 | file | lines | bytes | fences |
 |---|---:|---:|---|
-| CHECKLIST.md | 93 | 7725 | OK |
-| E2E_TEST_RESULTS.md | 110 | 5308 | OK |
-| FIXTURE_TEST_RESULTS.md | 28 | 1774 | OK |
-| README.md | 230 | 16039 | OK |
-| SKILL.md | 167 | 22894 | OK |
+| CHECKLIST.md | 97 | 8678 | OK |
+| E2E_TEST_RESULTS.md | 241 | 14445 | OK |
+| FIXTURE_TEST_RESULTS.md | 34 | 2223 | OK |
+| README.md | 237 | 18418 | OK |
+| SKILL.md | 178 | 26067 | OK |
 | SOURCES.md | 12 | 863 | OK |
-| references/task-template.md | 68 | 3181 | OK |
+| references/task-template.md | 69 | 3203 | OK |
 
 ## Checks
 
@@ -38,6 +38,6 @@
 - This validator does not install or execute the skill.
 - Skill invocation and the minimal save/load/change chain: see `E2E_TEST_RESULTS.md`.
 - Script fixture semantics: see `FIXTURE_TEST_RESULTS.md`.
-- Archive/restore, project isolation, 1.0.0 migration, concurrency: not executed.
+- Current dynamic coverage, including controlled fixture acceptance: see `E2E_TEST_RESULTS.md`.
 
 Static checks do not replace end-to-end acceptance.

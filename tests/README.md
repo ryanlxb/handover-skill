@@ -18,7 +18,7 @@ Checks required files, frontmatter keys, code-fence balance, local Markdown link
 python3 -I tests/run_fixture_tests.py
 ```
 
-Runs 13 fixture cases against `handover/scripts/handover.py` in temporary git and non-git projects:
+Runs 19 fixture cases against `handover/scripts/handover.py` in temporary git and non-git projects:
 
 - matched baseline;
 - snapshot binding mismatch;
@@ -29,7 +29,12 @@ Runs 13 fixture cases against `handover/scripts/handover.py` in temporary git an
 - partial baseline with and without a definite change;
 - non-git project;
 - fingerprint SHA-256 mismatch;
-- `.claude/` and `.git/` exclusion.
+- `.claude/` and `.git/` exclusion;
+- `list` title from frontmatter and fallback to task-id.
+- `ignore-check` ok when `.handover/` and `handover.md` are ignored and untracked;
+- `ignore-check` warning when ignore rules are missing;
+- `ignore-check` warning when task data is tracked even if ignore rules exist;
+- `ignore-check` not-git when the project is not a Git work tree.
 
 The script prints a Markdown report. It exits non-zero if any case fails.
 

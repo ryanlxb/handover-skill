@@ -1,4 +1,4 @@
-# v1.1 验收清单
+# v1.1.0-rc.1 验收清单
 
 以下为建议测试，不代表已在你的 Claude Code 中执行。结构/静态检查结果见 `VALIDATION.md`；端到端验收需另行执行。
 
@@ -6,7 +6,7 @@
 
 1. 项目 A 保存 `/handover save demo`，确认只生成 A/handover.md 和 A/.handover/demo.md，不修改业务代码。
 2. 新窗口进入 A，执行 `/handover load demo`，确认核验工作区后汇报，不自动开发；load 不改变 status 或 `updated_at`。
-3. 只有一个活跃任务且 freshness=fresh 时，不带 ID 的 load 自动选择并告知；多个时列出选择。
+3. 只有唯一 `in-progress` 任务且 freshness=fresh 时，不带 ID 的 load 自动选择并告知；多个 `in-progress`、stale/unknown、或只有 pending/blocked/paused 时列出候选，不自动选择。
 4. 项目 B 执行 list/load，不得列出 A 的任务；B 可保存同名 demo。
 5. brief 不继续旧任务；新目标保存为独立 ID。
 6. 非 Git 或根目录不明确时，报告限制，不猜测写入位置。
@@ -36,7 +36,7 @@
 
 ## 选择与列表
 
-24. 两个活跃任务：无 ID load 只列候选，不按“最近更新”擅自选择。
+24. 两个 `in-progress` 任务：无 ID load 只列候选，不按“最近更新”擅自选择；若只有一个 `in-progress` 并伴随 pending/blocked/paused，仍按唯一 `in-progress` 规则处理。
 25. 待识别记录（status unknown、YAML 损坏、未支持 schema、重复 task-id、文件名与 task_id 不一致）：list 的异常区域可见，不被静默隐藏；无 ID load 不选择它们。
 26. list 输出只含 frontmatter 字段；不出现正文；显示隐藏数量（completed/cancelled/archived）。
 27. 连续 list/load 后 `updated_at` 不变。
@@ -71,7 +71,7 @@
 44. 任务 frontmatter 的 `snapshot_id` 与 sidecar 不一致：`check` 返回 unknown，不继续比较内容或判 matched。
 45. 任务 frontmatter 的 `fingerprint_file`/`fingerprint_sha256` 与 sidecar 不一致：`check` 返回 unknown。
 46. 正文已更新、指纹生成失败、旧 sidecar 仍在：`snapshot_id` 不匹配或字段缺失 → unknown；不得误用旧指纹。
-47. 正文写完到指纹生成之间代码被修改：save 后的 `check` 返回 changed；报告“快照期间代码变化”，不宣称干净保存。
+47. 指纹生成后的 `check` 只证明检查时现场与刚生成的基线一致；不证明正文语义与代码一致，也不证明正文整理期间代码始终未变。构造“正文按 A 写、代码变 B、对 B 生成基线、check matched”的场景，确认报告不会宣称正文与代码一致。
 48. 保存后新增声明范围内的相关文件：`check` 报 changed（git status 条目变化）。
 49. 保存后删除或重命名声明范围内的相关文件：`check` 报 changed。
 50. 文件内容不变，但暂存状态变化（staged/unstaged）：`check` 报 changed。
@@ -91,3 +91,7 @@
 64. paths 清单里出现 `.claude/skills/...`、`.git/...` 或 `handover.md`：fingerprint 应跳过并在 `skipped_excluded` 中报告，不得把它们算入声明范围。
 65. Claude Code E2E：保存后 sidecar 只包含业务相关文件，不包含 `.claude/skills/handover/` 的 SKILL.md / CHECKLIST.md。
 66. `handover.md` 使用“任务列表”列出所有任务；不出现唯一的“当前任务”作为恢复授权；多任务时全部列出。
+67. 同一会话先 `load` A 再 `load` B：确认 A 的内容仍在上下文中；切换不相关任务时应提示新会话或先 `/clear`，不把“加载 B”当成撤回 A。
+68. 检查 Auto Memory / memory 目录：本 Skill 不写入任务进度；若其他机制写入旧任务状态，记录为外部上下文风险。
+69. list 标题：frontmatter 有 `title` 时显示 title；缺失时回退显示 task-id，不读取正文。
+70. load 的一致性核验优先运行 `check` 并读取精简结果；不得为了汇报而读取 sidecar 全文（排错时除外）。
