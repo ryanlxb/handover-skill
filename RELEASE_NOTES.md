@@ -3,7 +3,7 @@
 - Date: 2026-11-02
 - Status: **release candidate for controlled trial**; not a stable release.
 - Install: copy `handover/` to `~/.claude/skills/handover/`; back up any existing skill first.
-- Package integrity: `handover/SHA256SUMS.txt` covers the skill package; `MANIFEST.sha256` covers every file in this archive. The ZIP's own SHA-256 is in the external `.sha256` file next to the archive.
+- Package integrity: `handover/SHA256SUMS.txt` covers the skill package; `MANIFEST.sha256` covers every other file in this archive and excludes itself (20 files). The ZIP's own SHA-256 is in the external `.sha256` file next to the archive.
 
 ## Key hashes
 
