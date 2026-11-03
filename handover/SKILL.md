@@ -44,6 +44,7 @@ disable-model-invocation: true
 - brief 默认读取预算 ≤ 4k tokens；load 默认读取预算 ≤ 6k tokens（指读取的证据文件，不含 SKILL.md、模式 reference 和 `check` 输出）；默认读取集见 [references/brief-load.md](references/brief-load.md)。
 - 需要完整细节时，先读用户点名的章节；仍然不整文件读取。
 - save/archive/restore 只读必要文件；不批量读取其他任务正文。
+- save 前先对旧记录跑 `check`；changed/unknown/stale 时只读摘要/相关章节，不把旧结论当当前事实。
 - save 后可选用 `stats` 查看任务文档的 token 分布；优先压缩高占比章节，不按空格盲目压缩。
 
 ## 模式路由
@@ -52,7 +53,7 @@ disable-model-invocation: true
 |---|---|---|
 | save（默认） | 保存当前任务状态 | [references/save.md](references/save.md) + [references/fingerprint.md](references/fingerprint.md) |
 | load | 只读核验并简报 | [references/brief-load.md](references/brief-load.md) |
-| brief | 加载项目背景，不继承旧任务 | [references/brief-load.md](references/brief-load.md) |
+| brief | 加载项目背景 + 摘要级项目状态，不读任务正文 | [references/brief-load.md](references/brief-load.md) |
 | list | 列出任务 | 本节；字段解释见 [references/data-model.md](references/data-model.md) |
 | archive | 归档任务 | [references/archive-restore.md](references/archive-restore.md) + [references/data-model.md](references/data-model.md) |
 | restore | 恢复归档 | [references/archive-restore.md](references/archive-restore.md) + [references/data-model.md](references/data-model.md) |

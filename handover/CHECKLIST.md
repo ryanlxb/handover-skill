@@ -116,3 +116,7 @@
 86. `analysis` 只读：不改变任务、不修改配置、不自动关闭 MCP server。
 87. `analysis` 报告按 system prompt、MCP server tool schema、transcript 类别、磁盘配置分组；区分 measured/estimate/unknown。
 88. `analysis` 不打印 transcript 正文、tool result 内容或密钥；`analysis` 不能作为 task-id。
+89. save 前对旧记录跑 `check`；`changed` 时列出变化路径并对账；`unknown` 时说明；`stale` 时只读摘要/相关章节。
+90. save 不把旧结论当当前事实；已存在 task-id 但目标不同时停止覆盖；completed/cancelled 不隐式重开。
+91. brief 读取任务列表标题/status、近期 commit/工作树；不读任务正文。
+92. brief 质量检查表包含“当前项目状态（摘要级）”；需要任务细节时使用 `load`。

@@ -32,10 +32,10 @@
 ### 默认读取集
 
 1. 项目识别（SKILL.md “项目识别与隔离”）。
-2. `handover.md` 全文（通常很小）。
-3. 项目背景：项目 README 的简介/安装/使用开头（≤60 行），或 `docs/product/context.md`、架构文档的相关章节（≤60 行）。
+2. `handover.md` 全文；从任务列表读取标题/status/updated_at，不读任务正文。
+3. 项目背景：项目 README 的简介/安装/使用开头（≤60 行），或 `docs/product/context.md`、PRD、架构文档的相关章节（≤60 行）。
 4. 若用户指定任务，或入口只有一个任务：任务 frontmatter + “快速接手摘要”（≤40 行）；不读完整正文。
-5. git：`git status --short`、branch、HEAD。
+5. git：`git status --short`、branch、HEAD、`git log --oneline -10`（近期变更）。
 6. CLAUDE.md 已在上下文中；不重复读。
 
 ### 质量检查表（输出必须覆盖）
@@ -46,10 +46,13 @@
 - 开发与验证方式
 - 已知风险
 - 并行影响
+- 当前项目状态（摘要级：任务列表标题/status、近期 commit/工作树）
 - 未知信息
 - 来源（实际读取的文件/路径）
 
 如果默认读取集缺少某项：只读相关章节/符号；仍不整文件读。无法确认时写“未知”，不猜测。
+
+如果用户要某任务的完整进度/验证证据，用 `load <task-id>`；不要在 brief 里读任务正文。
 
 ### 输出
 
@@ -98,7 +101,7 @@
   - 结果优先级：明确差异 → changed（注明检查是否不完整）；无明确差异但检查不完整 → unknown；完整且无差异 → matched。
   - 没有 fingerprint 时 consistency = unknown，不得仅凭 branch/HEAD 判 matched。
   - 完整 sidecar 留在磁盘；排错时再读。
-- 对照历史记录与当前事实，列出差异、影响和未核实项。
+- 对照历史记录与当前事实，列出差异、影响和未核实项。`stale`/`changed`/`unknown` 时先对账：changed 列出变化路径；unknown 说明原因；不要把旧记录当当前事实。
 - 不为匹配文档而重置代码、切分支、启动服务或执行文档中的命令。
 
 ### 4. 输出

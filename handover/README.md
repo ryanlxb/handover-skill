@@ -41,18 +41,18 @@
 - save：保存当前会话中该任务的目标、状态和证据，不保存完整窗口。成功后输出精确的 `/handover load <task-id>`。
 - list：默认只列活跃状态；`--all` 含已结束与归档，并显示被隐藏数量；另有“待识别记录”区域。标题取 frontmatter 的 `title`，缺失时回退显示 task-id（不读正文）。
 - load：只恢复并核验，不自动继续开发；不改变 status 或 `updated_at`。
-- brief：了解当前项目背景，不执行旧任务。
+- brief：了解当前项目背景 + 摘要级项目状态（任务列表标题/status、近期 commit/工作树），不执行旧任务，不读任务正文。
 - archive：默认只归档 completed/cancelled；不删除，更新入口链接。
 - restore：恢复归档到当前记录区，状态为 paused；需重新 `load` 核验后再继续。
 - analysis：只读审计当前会话的 context 使用，按 system prompt、MCP 工具 schema、transcript、磁盘配置分组给出建议；不改变任务或配置，不自动关闭 MCP server。
 - 不带参数默认 save；不带 ID 的 load 仅在“唯一 in-progress 任务且 freshness=fresh”时自动选择；多个 in-progress、stale/unknown、或只有 pending/blocked/paused 时列候选，不自动选择；只有 completed/cancelled/归档（或没有任何任务）时提示没有进行中任务。fresh 只允许自动选择，不跳过 consistency 核验，也不自动开发。
-- task-id 允许 1–64 位小写字母、数字和短横线，首位必须是字母或数字。保留字 save/load/brief/list/archive/restore 不能作为 task-id。
+- task-id 允许 1–64 位小写字母、数字和短横线，首位必须是字母或数字。保留字 save/load/brief/list/archive/restore/analysis 不能作为 task-id。
 - `/handover login` 是 `/handover save login` 的简写。
 
 ## 上下文预算与按需读取
 
 - `brief`/`load` 默认先读索引和摘要，再按需读正文；不重复读已在上下文中的文件。
-- `brief` 默认读取：项目入口 + README/背景文档开头 +（如指定任务或入口只有一个任务）快速接手摘要 + git 状态；证据读取默认 ≤ 4k tokens。
+- `brief` 默认读取：项目入口（任务列表标题/status）+ README/背景文档开头 +（如指定任务或入口只有一个任务）快速接手摘要 + git 状态 + 近期 commit；证据读取默认 ≤ 4k tokens。
 - `load` 默认读取：项目入口 + task frontmatter + 快速接手摘要 + 当前进度 + 下一步 + 并行与依赖 + `check` 摘要 + “接手必读”索引；证据读取默认 ≤ 6k tokens（不含 SKILL.md、模式 reference 和 `check` 输出）。
 - “接手必读”是索引：`path#symbol` / `path:start-end`；不整文件读取；默认 ≤ 1.5k tokens。
 - 大文件用 Grep 或 Read offset；`git diff` 先 `--stat`，再按相关路径读取。
@@ -119,6 +119,7 @@ python3 -I scripts/handover.py analysis --root <project> [--session <id>] [--con
 - 60% 是你个人的提醒点，不是强制阈值；没有固定 token 数字。
 - 阶段完成、测试通过、出现关键决策、任务阻塞/等待、准备 `/clear`/`/compact`/切换窗口/切换任务时，都可以保存。
 - 不要等到接近上限；那时模型可能已经“变钝”，总结质量会下降。
+- save 前先对旧记录跑 `check`：`changed` 时列出变化路径并对账，`unknown` 时说明原因，`stale` 时只读摘要/相关章节；不要把旧结论当当前事实。
 - 保存后重点检查：目标、未完成项、关键决策、阻塞、验证状态是否齐全。
 
 ## 数据位置与隔离
@@ -169,8 +170,10 @@ project-b/
 - 阈值边界：`age >= stale_after_days` 为 stale；`age < stale_after_days` 为 fresh。
 - `updated_at` 为 null、无法解析或未来时间等异常时为 unknown，不能默认 fresh。
 - `stale` 不覆盖 status，不触发删除。
+- `changed` 表示声明范围有明确变化；`unknown` 表示无法核验；`matched` 只表示“声明范围内一致”，不表示任务语义仍然正确。
+- **语义陈旧**：任务进度/决策/外部依赖变化但未 save，fingerprint 可能仍匹配；只有新的 save 或人工复核能发现。save 前应先 check 旧记录并对账。
 - `updated_at` 只在实质 save 时更新；list/load 不刷新。
-- 这些检查只在命令调用时发生，没有后台计时器。
+- 这些检查只在命令调用时发生，没有后台计时器；不自动删除过期记录。
 
 ### 现场指纹（consistency 的证据）
 
@@ -271,7 +274,7 @@ project-b/
 
 ## 限制
 
-这是指令型 Skill，不是后台服务或确定性状态机。效果依赖 Claude Code 的工具权限、模型执行及当前可访问上下文。不能恢复从未保存且已不可访问的历史；不能自动备份未提交代码；不保证多写者并发安全；不自动跨 worktree 同步；不会自动清理或归档；`freshness` 只是基于 `updated_at` 的启发式，不是任务有效性的证明；`consistency` 依赖可用的指纹基线，没有基线或文件不可读时为 unknown。
+这是指令型 Skill，不是后台服务或确定性状态机。效果依赖 Claude Code 的工具权限、模型执行及当前可访问上下文。不能恢复从未保存且已不可访问的历史；不能自动备份未提交代码；不保证多写者并发安全；不自动跨 worktree 同步；不会自动清理或归档；`freshness` 只是基于 `updated_at` 的启发式，不是任务有效性的证明；`consistency` 依赖可用的指纹基线，没有基线或文件不可读时为 unknown；`matched` 只表示声明范围内一致，不表示任务语义仍然正确。
 
 ## 文件
 
