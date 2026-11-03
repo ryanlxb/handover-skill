@@ -6,7 +6,7 @@
 - Model gateway: custom gateway (name withheld); the harness printed `unrecognized_model` at startup and execution continued.
 - Invocation: `claude -p "<slash command>" --permission-mode dontAsk --allowedTools "Read Write Edit Glob Grep Bash" --max-turns 30 --no-session-persistence`
 - Scope: minimal real save/load/change chain in temporary git projects. Fixture-level script tests are in `FIXTURE_TEST_RESULTS.md`; static checks are in `VALIDATION.md`.
-- Historical note: this report covers `v1.1.0-rc.1`. Current v1.1.1 fixture results are in `FIXTURE_TEST_RESULTS.md` (55 cases); v1.1.1 headless save/load, status-selection, and `status-guard` results are summarized in `REVIEW.md` and `RELEASE_NOTES.md`. This file is not v1.1.1 evidence.
+- Historical note: this report covers `v1.1.0-rc.1`. Current v1.1.2 fixture results are in `FIXTURE_TEST_RESULTS.md` (82 cases); v1.1.1 headless save/load, status-selection, and `status-guard` results remain summarized in `REVIEW.md` and `RELEASE_NOTES.md`, but were not rerun for v1.1.2. This file is not v1.1.1 or v1.1.2 evidence.
 
 ## Coverage summary
 

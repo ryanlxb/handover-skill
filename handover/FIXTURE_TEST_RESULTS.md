@@ -1,9 +1,9 @@
-# v1.1.1 Fixture Test Results
+# v1.1.2 Fixture Test Results
 
-- Date (UTC): 2026-11-03T07:51:07+00:00
+- Date (UTC): 2026-11-03T09:37:14+00:00
 - Script: `handover/scripts/handover.py`
 - Scope: fixture-level script tests only; no Claude Code skill execution.
-- Cases: 55, passed: 55, failed: 0
+- Cases: 82, passed: 82, failed: 0
 
 | # | case | expected | actual | result |
 |---:|---|---|---|---|
@@ -58,10 +58,37 @@
 | 49 | matched 输出范围外变化计数 | matched + out_of_scope_changes | consistency: matched | PASS |
 | 50 | 文件超过上限但大小已变：判 changed 而非 unknown | changed, size changed | consistency: changed | PASS |
 | 51 | list：重复 task_id 可见 | duplicate task_id | exit 0 | PASS |
-| 52 | analysis 文本输出：tool schema + shape delta | exit 0, contains groups | exit 0 | PASS |
-| 53 | analysis --json：分组和 shape delta | exit 0, JSON valid | exit 0 | PASS |
-| 54 | analysis：显式 transcript 缺失 | exit 2, error | exit 2 | PASS |
-| 55 | analysis：无 transcript 时仍给出配置报告 | exit 0, not found note | exit 0 | PASS |
+| 52 | list：重复 ID 的所有记录都进入 EXCEPTIONS | no duplicate in ACTIVE | exit 0 | PASS |
+| 53 | list：schema 为布尔值不进入 ACTIVE | exception, not active | exit 0 | PASS |
+| 54 | fingerprint --out 不能覆盖业务文件 | exit 2, business file unchanged | exit 2 | PASS |
+| 55 | fingerprint --out 不能覆盖任务 Markdown | exit 2, task unchanged | exit 2 | PASS |
+| 56 | fingerprint --out 允许 .handover/archive 下的归档 sidecar | exit 0, sidecar written | exit 0 | PASS |
+| 57 | fingerprint 拒绝覆盖其他任务的 sidecar | exit 2, existing sidecar unchanged | exit 2 | PASS |
+| 58 | fingerprint --out 不能写到项目外 | exit 2, no file | exit 2 | PASS |
+| 59 | fingerprint --out 不能通过 archive 符号链接写到项目外 | exit 2, no file | exit 2 | PASS |
+| 60 | fingerprint 拒绝保留字 task-id | exit 2, reserved | exit 2 | PASS |
+| 61 | analysis 不读取项目 transcript 目录外的符号链接 | not found, no content | exit 0 | PASS |
+| 62 | ignore-check：git 执行失败不被当作非 Git | unknown, exit 2 | exit 2 | PASS |
+| 63 | status-guard 拒绝不支持/布尔 schema | unknown, exit 2 | exit 2 | PASS |
+| 64 | status-guard 拒绝其他项目的记录 | unknown, exit 2 | exit 2 | PASS |
+| 65 | status-guard 旧格式迁移分支：仅可识别旧记录 exit 3 | plain exit 2; legacy exit 3; corrupt/unclosed exit 2 | exit 3 | PASS |
+| 66 | 受限 YAML：行内注释与引号内 # 正确处理 | list/status-guard succeed | exit 0 | PASS |
+| 67 | 受限 YAML：普通标量中的撇号不被当作引号 | list/status-guard succeed | exit 0 | PASS |
+| 68 | 受限 YAML：单引号标量中的 '' 转义 | list/status-guard succeed | exit 0 | PASS |
+| 69 | 受限 YAML：重复键被拒绝而非后者覆盖 | exception + exit 2 | exit 0 | PASS |
+| 70 | 受限 YAML：序列/嵌套映射/缩进/引号尾随内容被拒绝 | exit 2 with parse error | exit 2 | PASS |
+| 71 | config 符号链接指向项目外时不读取 | warning + default freshness | exit 0 | PASS |
+| 72 | fingerprint 报告内容哈希与 git 状态范围 | coverage lines | exit 0 | PASS |
+| 73 | check matched 报告覆盖范围 | coverage lines | consistency: matched | PASS |
+| 74 | 目录内未声明文件：同状态内容变化不被内容哈希发现（记录边界） | matched (documented limitation) | consistency: matched | PASS |
+| 75 | 只改任务正文不更新 frontmatter：check 仍 matched（记录边界） | matched (documented limitation) | consistency: matched | PASS |
+| 76 | check 拒绝布尔 sidecar schema | unknown, exit 2 | consistency: unknown | PASS |
+| 77 | analysis 不输出 system/tool 正文片段 | no markers, no head field | exit 0 | PASS |
+| 78 | analysis：显式 session 缺失不回退；未指定时才自动选择 | missing exit 2; auto note; invalid exit 2 | exit 2 | PASS |
+| 79 | analysis 文本输出：tool schema + shape delta | exit 0, contains groups | exit 0 | PASS |
+| 80 | analysis --json：分组和 shape delta | exit 0, JSON valid | exit 0 | PASS |
+| 81 | analysis：显式 transcript 缺失 | exit 2, error | exit 2 | PASS |
+| 82 | analysis：无 transcript 时仍给出配置报告 | exit 0, not found note | exit 0 | PASS |
 
 ## Not covered by these fixture tests
 

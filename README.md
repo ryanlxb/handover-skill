@@ -2,7 +2,7 @@
 
 A Claude Code skill for carrying task state across sessions: manually **save** a verified handover, then **load** it in a fresh session or a parallel task.
 
-> Status: **v1.1.1**. Static validation and 55/55 fixture cases pass; v1.1.1 headless save/load and status-selection smokes also passed. The full change → load → save chain and controlled fixture acceptance remain the v1.1.0-rc.1 record. Real business-project trials, real 1.0.0 artifacts, concurrency, and real permission modes remain untested.
+> Status: **v1.1.2**. Static validation and 82/82 fixture cases pass. The v1.1.2 security/consistency fixes have fixture-level evidence only; the v1.1.1 headless save/load and status-selection smokes were not rerun after these changes. The full change → load → save chain and controlled fixture acceptance remain the v1.1.0-rc.1 record. Real business-project trials, real 1.0.0 artifacts, concurrency, and real permission modes remain untested.
 
 ## Why
 
@@ -107,14 +107,14 @@ Current results:
 | Layer | Result |
 |---|---|
 | Static/structural (`VALIDATION.md`) | PASS, no errors |
-| Script fixtures (`FIXTURE_TEST_RESULTS.md`) | 55/55 PASS |
-| v1.1.1 headless save/load smoke | PASS; full change → load → save chain not rerun |
-| v1.1.1 status-selection smoke | PASS; completed tasks not reused; new in-progress task created |
-| Real Claude Code E2E (rc.1 minimal save/load/change) | PASS after a scope fix; not rerun for v1.1.1 |
-| Controlled fixture acceptance (rc.1: no-ID load, multi-turn, A/B isolation, archive/restore, 1.0-style migration) | PASS in temporary projects/fixtures; not rerun for v1.1.1 |
-| Real business project, real 1.0.0 artifact, concurrency/real permission modes, full 110-item checklist | Not executed |
+| Script fixtures (`FIXTURE_TEST_RESULTS.md`) | 82/82 PASS |
+| v1.1.1 headless save/load smoke | PASS; not rerun for v1.1.2 |
+| v1.1.1 status-selection smoke | PASS; not rerun for v1.1.2 |
+| Real Claude Code E2E (rc.1 minimal save/load/change) | PASS after a scope fix; not rerun for v1.1.1 or v1.1.2 |
+| Controlled fixture acceptance (rc.1: no-ID load, multi-turn, A/B isolation, archive/restore, 1.0-style migration) | PASS in temporary projects/fixtures; not rerun for v1.1.1 or v1.1.2 |
+| Real business project, real 1.0.0 artifact, concurrency/real permission modes, full 122-item checklist | Not executed |
 
-`VALIDATION.md` and `FIXTURE_TEST_RESULTS.md` are the current v1.1.1 records. `E2E_TEST_RESULTS.md` remains the v1.1.0-rc.1 record; it is not v1.1.1 evidence. Controlled fixture acceptance is not a real-project trial.
+`VALIDATION.md` and `FIXTURE_TEST_RESULTS.md` are the current v1.1.2 records. `E2E_TEST_RESULTS.md` remains the v1.1.0-rc.1 record; it is not v1.1.1 or v1.1.2 evidence. Controlled fixture acceptance is not a real-project trial.
 
 `SHA256SUMS.txt` verifies file digests only; it does not prove logic, installation, permissions, or safety.
 
@@ -122,8 +122,8 @@ Current results:
 
 - Archive/restore are instruction-based, not scripted; real file-move failure behavior is still being validated.
 - `SKILL.md` routes to `references/`, and `references/save.md` points to `references/task-template.md`. The v1.1.0 headless brief E2E exercised the new references, but the full save/load/change E2E and template read were not rerun after rc.1. Verify once in a new session.
-- The fingerprint covers declared files plus relevant git state; it does not prove the whole project is consistent. `matched` output now reports out-of-scope change counts, but that is transparency, not full-project verification.
-- v1.1.1 fixes are covered by fixtures and headless save/load + status-selection smokes: empty-scope refusal, complete task/sidecar binding, root-directory scope, symlink write/list protection, config parsing, first-save `ignore-check`, and `status-guard` for completed/cancelled save targets. The full change → load → save chain was not rerun.
+- The fingerprint covers declared files plus relevant git state; it does not prove the whole project is consistent. Content hashes cover only explicitly listed files; directory scope only filters git status entries. `matched` also does not hash the task body. `matched` output reports out-of-scope change counts, but that is transparency, not full-project verification.
+- v1.1.2 fixes are covered by fixtures: arbitrary `--out` overwrite refusal, no system/tool content in `analysis`, schema/project_root validation in `status-guard`, an explicit legacy-migration branch, Git error classification in `ignore-check`, strict transcript selection, restricted frontmatter parsing, bool-schema and duplicate-ID handling in `list`, config symlink boundaries, reserved task IDs, and coverage reporting. The v1.1.2 changes were not exercised by a new headless save/load smoke or real Claude Code E2E; the full change → load → save chain was not rerun.
 - The skill is a prompt-based skill, not a background service or a deterministic state machine.
 
 ## License

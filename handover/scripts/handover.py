@@ -11,7 +11,10 @@ fingerprint --root ROOT --task TASK --paths PATHS [--out OUT]
             [--snapshot-id ID] [--scope-dir DIR ...] [--max-bytes N]
     Hash the listed files and the relevant git state, then write
     .handover/<task>.fingerprint.json. Prints the snapshot id and sidecar
-    SHA-256 for the task frontmatter.
+    SHA-256 for the task frontmatter. A custom --out must be directly under
+    .handover/ or .handover/archive/, use a <task>[-<timestamp>].fingerprint.json
+    name, and may only overwrite an existing sidecar for the same task and
+    project; ordinary business files and task Markdown are never overwritten.
 
 check --root ROOT --task TASK [--task-file FILE] [--sidecar SIDECAR]
       [--expected-sha256 HASH] [--expected-snapshot-id ID]
@@ -23,11 +26,16 @@ check --root ROOT --task TASK [--task-file FILE] [--sidecar SIDECAR]
       complete + no change -> matched
 
 status-guard --root ROOT --task TASK [--task-file FILE] [--reopen-authorised]
+            [--legacy-migration]
     Check whether a task may be reused as the target of `save`. Exit 0 =
     absent or active (new/reuse allowed); 1 = completed/cancelled (stop and
     ask the user to create a new task or explicitly authorise reopen);
-    2 = unknown/error. `--reopen-authorised` is only for an explicit user
-    request to reopen the completed/cancelled task.
+    2 = unknown/error; 3 = a recognisable frontmatter-less legacy record
+    when --legacy-migration is explicitly requested (migrate, re-read, then
+    rerun status-guard without the flag). `--reopen-authorised` is only for
+    an explicit user request to reopen the completed/cancelled task.
+    The guard checks task_id, schema, project_root, and status; it is not a
+    write lock and does not validate the task body.
 
 ignore-check --root ROOT
     Check whether .handover/ and handover.md are both ignored by Git and not
@@ -43,7 +51,9 @@ analysis --root ROOT [--session ID] [--transcript FILE]
     Read-only context audit. Parses the latest api-request-shape (system prompt
     and tool schemas), transcript blobs (message/tool-result sizes), and
     on-disk config sizes. Reports approximate tokens by category and ranked
-    recommendations. Does not print message contents or secrets.
+    recommendations. Does not print message contents or secrets. An explicit
+    --session that does not exist is an error; it never falls back to another
+    transcript.
 
 This script never modifies task files or business files. It only writes the
 fingerprint sidecar requested by `fingerprint`. Requires Python 3.9+.
@@ -69,10 +79,27 @@ DEFAULT_CONTEXT_WINDOW = 1000000
 CLAUDE_HOME = Path.home() / ".claude"
 TASK_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 SNAPSHOT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+SIDECAR_SUFFIX = ".fingerprint.json"
+KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+POSITIVE_INT_RE = re.compile(r"^[0-9]+$")
 
 ACTIVE = {"in-progress", "pending", "blocked", "paused"}
 ENDED = {"completed", "cancelled"}
 KNOWN_STATUS = ACTIVE | ENDED | {"unknown"}
+RESERVED_TASK_IDS = {"save", "load", "brief", "list", "archive", "restore", "analysis"}
+
+
+class FrontmatterError(ValueError):
+    """Raised when flat frontmatter uses unsupported or malformed syntax."""
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        self.code = code
+        self.detail = detail
+        super().__init__(detail or code)
+
+    def __str__(self) -> str:
+        return "%s: %s" % (self.code, self.detail) if self.detail else self.code
 
 
 def now_utc() -> datetime:
@@ -108,32 +135,135 @@ def freshness(updated_at: Optional[str], stale_days: int) -> str:
     return "stale" if age >= stale_days else "fresh"
 
 
+def _strip_inline_comment(value: str) -> str:
+    """Strip a YAML inline comment.
+
+    Quoting is only special when it starts the scalar. An apostrophe inside a
+    plain scalar (for example `It's fine`) is an ordinary character.
+    """
+    value = value.rstrip()
+    if not value:
+        return value
+    quote = value[0] if value[0] in ("'", '"') else None
+    i = 1 if quote else 0
+    while i < len(value):
+        ch = value[i]
+        if quote == '"':
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                quote = None
+        elif quote == "'":
+            if ch == "'":
+                if i + 1 < len(value) and value[i + 1] == "'":
+                    i += 2
+                    continue
+                quote = None
+        elif ch == "#" and (i == 0 or value[i - 1].isspace()):
+            return value[:i].rstrip()
+        i += 1
+    if quote is not None:
+        raise FrontmatterError("unclosed_quote", "unterminated quoted value")
+    return value
+
+
+def _parse_scalar(value: str) -> Any:
+    """Parse one restricted flat-YAML scalar.
+
+    Supported: null, true/false, quoted strings, and plain strings. Nested
+    mappings, sequences, anchors, tags, aliases, and block scalars are
+    rejected instead of being silently misread.
+    """
+    if value == "":
+        return None
+    if value.startswith("'"):
+        chars: List[str] = []
+        i = 1
+        while i < len(value):
+            if value[i] == "'":
+                if i + 1 < len(value) and value[i + 1] == "'":
+                    chars.append("'")
+                    i += 2
+                    continue
+                if value[i + 1 :].strip():
+                    raise FrontmatterError(
+                        "invalid_quoted_value",
+                        "trailing content after single-quoted value",
+                    )
+                return "".join(chars)
+            chars.append(value[i])
+            i += 1
+        raise FrontmatterError("unclosed_quote", "unterminated single-quoted value")
+    if value.startswith('"'):
+        if len(value) < 2 or not value.endswith('"'):
+            raise FrontmatterError("unclosed_quote", "unterminated double-quoted value")
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise FrontmatterError("invalid_quoted_value", str(exc))
+    if value[0] in "[{|>&*!%@`" or (
+        value[0] == "?" and (len(value) == 1 or value[1].isspace())
+    ):
+        raise FrontmatterError("unsupported_syntax", "unsupported YAML value: %s" % value)
+    if value.startswith("- ") or value == "-":
+        raise FrontmatterError("unsupported_syntax", "sequences are not supported: %s" % value)
+    if ": " in value or value.endswith(":"):
+        raise FrontmatterError(
+            "unsupported_syntax", "nested mappings are not supported: %s" % value
+        )
+    lower = value.lower()
+    if lower in ("null", "~"):
+        return None
+    if lower in ("true", "false"):
+        return lower == "true"
+    # Keep numbers as strings. The task schema and config validate numeric
+    # fields explicitly, which avoids YAML type ambiguity for values such as
+    # task IDs and commit hashes that happen to be all digits.
+    return value
+
+
 def parse_flat_yaml(lines: List[str]) -> Dict[str, Any]:
+    """Parse a restricted flat YAML block.
+
+    The protocol uses one `key: value` pair per line with no nesting. Invalid
+    lines, duplicate keys, and unsupported YAML constructs raise
+    FrontmatterError instead of being ignored.
+    """
     data: Dict[str, Any] = {}
     for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("#"):
+        line = raw.rstrip("\r")
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
             continue
+        if line[:1] in (" ", "\t"):
+            raise FrontmatterError(
+                "indented_line", "indented frontmatter is not supported: %s" % stripped
+            )
         if ":" not in line:
-            continue
+            raise FrontmatterError(
+                "unsupported_line", "expected 'key: value': %s" % stripped
+            )
         key, value = line.split(":", 1)
         key = key.strip()
-        value = value.strip()
-        if value == "" or value.lower() == "null":
-            data[key] = None
-        elif value.lower() in ("true", "false"):
-            data[key] = value.lower() == "true"
-        elif value.lstrip("-").isdigit():
-            data[key] = int(value)
-        else:
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-                value = value[1:-1]
-            data[key] = value
+        if not KEY_RE.match(key):
+            raise FrontmatterError("invalid_key", "unsupported frontmatter key: %s" % key)
+        if key in data:
+            raise FrontmatterError("duplicate_key", "duplicate frontmatter key: %s" % key)
+        if value and not value[0].isspace():
+            raise FrontmatterError(
+                "unsupported_line", "expected a space after ':' in: %s" % stripped
+            )
+        data[key] = _parse_scalar(_strip_inline_comment(value.strip()))
     return data
 
 
 def parse_simple_yaml(text: str) -> Optional[Dict[str, Any]]:
-    """Parse a flat YAML frontmatter block. Returns None if absent/unclosed."""
+    """Parse a flat YAML frontmatter block.
+
+    Returns None when the block is absent. Raises FrontmatterError when the
+    opening delimiter has no closing delimiter or the block is malformed.
+    """
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return None
@@ -143,7 +273,9 @@ def parse_simple_yaml(text: str) -> Optional[Dict[str, Any]]:
             end = i
             break
     if end is None:
-        return None
+        raise FrontmatterError(
+            "unclosed_frontmatter", "missing closing frontmatter delimiter"
+        )
     return parse_flat_yaml(lines[1:end])
 
 
@@ -151,11 +283,15 @@ def parse_config_yaml(text: str) -> Optional[Dict[str, Any]]:
     """Parse a flat key/value config, with optional frontmatter delimiters."""
     lines = text.splitlines()
     if lines and lines[0].strip() == "---":
-        parsed = parse_simple_yaml(text)
+        try:
+            parsed = parse_simple_yaml(text)
+        except FrontmatterError as exc:
+            if exc.code != "unclosed_frontmatter":
+                raise
+            # A leading YAML document marker does not require a closing marker.
+            return parse_flat_yaml(lines[1:])
         if parsed is not None:
             return parsed
-        # A leading YAML document marker does not require a closing marker.
-        lines = lines[1:]
     return parse_flat_yaml(lines)
 
 
@@ -164,28 +300,77 @@ def read_frontmatter(path: Path) -> Tuple[Optional[Dict[str, Any]], str]:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         return None, "read_error: %s" % exc
-    data = parse_simple_yaml(text)
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None, "missing_frontmatter"
+    try:
+        data = parse_simple_yaml(text)
+    except FrontmatterError as exc:
+        if exc.code == "unclosed_frontmatter":
+            return None, "unclosed_frontmatter"
+        return None, "frontmatter_error: %s" % exc
     if data is None:
-        return None, "missing_or_unclosed_frontmatter"
+        return None, "missing_frontmatter"
     return data, "ok"
+
+
+def positive_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str):
+        text = value.strip()
+        if POSITIVE_INT_RE.match(text):
+            parsed = int(text)
+            return parsed if parsed > 0 else None
+    return None
+
+
+def schema_is_current(value: Any, allow_string: bool = False) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value == SCHEMA
+    if allow_string and isinstance(value, str):
+        text = value.strip()
+        return bool(POSITIVE_INT_RE.match(text)) and int(text) == SCHEMA
+    return False
+
+
+def task_id_error(task: str) -> Optional[str]:
+    if not TASK_RE.match(task):
+        return "invalid task-id: %s" % task
+    if task.lower() in RESERVED_TASK_IDS:
+        return "reserved task-id: %s" % task
+    return None
 
 
 def read_stale_days(root: Path) -> Tuple[int, Optional[str]]:
     config = root / ".handover" / "config.yaml"
+    if not within_root(root, config):
+        return (
+            DEFAULT_STALE_DAYS,
+            "config resolves outside project root; using default %d" % DEFAULT_STALE_DAYS,
+        )
     if not config.is_file():
         return DEFAULT_STALE_DAYS, None
     try:
         text = config.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         return DEFAULT_STALE_DAYS, "config_unreadable: %s" % exc
-    data = parse_config_yaml(text)
-    if data is None:
-        return DEFAULT_STALE_DAYS, "unclosed config frontmatter; using default %d" % DEFAULT_STALE_DAYS
+    try:
+        data = parse_config_yaml(text)
+    except FrontmatterError as exc:
+        return (
+            DEFAULT_STALE_DAYS,
+            "config_error: %s; using default %d" % (exc, DEFAULT_STALE_DAYS),
+        )
     if not data or "stale_after_days" not in data:
         return DEFAULT_STALE_DAYS, None
-    value = data.get("stale_after_days")
-    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-        return value, None
+    days = positive_int(data.get("stale_after_days"))
+    if days is not None:
+        return days, None
     return DEFAULT_STALE_DAYS, "invalid stale_after_days; using default %d" % DEFAULT_STALE_DAYS
 
 
@@ -267,6 +452,33 @@ def run_git(root: Path, args: List[str]) -> Tuple[Optional[str], Optional[str]]:
     if proc.returncode != 0:
         return None, proc.stderr.strip() or ("exit %d" % proc.returncode)
     return proc.stdout, None
+
+
+def git_work_tree_state(root: Path) -> Tuple[str, Optional[str]]:
+    """Classify git availability as yes / not-git / error.
+
+    Only the definite `not a git repository` response is reported as
+    not-git. A timeout, missing git executable, permission failure, or any
+    other git error is an error (unknown), not a successful non-git result.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return "error", str(exc)
+    out = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+    if proc.returncode == 0:
+        if out == "true":
+            return "yes", None
+        return "error", "not a git work tree (git reported %r)" % out
+    if proc.returncode == 128 and "not a git repository" in err.lower():
+        return "not-git", None
+    return "error", err or ("exit %d" % proc.returncode)
 
 
 def parse_status_z(raw: str) -> List[Tuple[str, str, Optional[str]]]:
@@ -455,13 +667,17 @@ def git_is_tracked(root: Path, rel: str) -> Tuple[Optional[bool], Optional[str]]
 
 def cmd_ignore_check(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    inside, error = run_git(root, ["rev-parse", "--is-inside-work-tree"])
-    if error or (inside or "").strip() != "true":
+    state, error = git_work_tree_state(root)
+    if state == "not-git":
         print("git: false")
-        if error:
-            print("reason: %s" % error)
         print("result: not-git")
         return 0
+    if state == "error":
+        print("git: unknown")
+        if error:
+            print("reason: %s" % error)
+        print("result: unknown")
+        return 2
 
     targets = [(".handover/", ".handover/"), ("handover.md", "handover.md")]
     results: List[Tuple[str, str, str]] = []
@@ -496,11 +712,36 @@ def cmd_ignore_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def existing_sidecar_error(path: Path, root: Path, task: str) -> Optional[str]:
+    """Return why an existing --out target is not a reusable sidecar, or None."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return "existing output is not a readable JSON sidecar: %s" % exc
+    if not isinstance(payload, dict):
+        return "existing output is not a JSON object"
+    if not schema_is_current(payload.get("schema")):
+        return "existing output sidecar schema is missing or unsupported"
+    if payload.get("task_id") != task:
+        return "existing output belongs to task %r" % payload.get("task_id")
+    recorded_root = payload.get("root")
+    if not recorded_root or Path(str(recorded_root)).resolve() != root:
+        return "existing output belongs to another project root"
+    if (
+        not isinstance(payload.get("files"), dict)
+        or not payload.get("files")
+        or not payload.get("snapshot_id")
+    ):
+        return "existing output is not a complete sidecar"
+    return None
+
+
 def cmd_fingerprint(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     task = args.task
-    if not TASK_RE.match(task):
-        print("error: invalid task-id: %s" % task, file=sys.stderr)
+    error = task_id_error(task)
+    if error:
+        print("error: %s" % error, file=sys.stderr)
         return 2
     snapshot_id = args.snapshot_id or uuid.uuid4().hex
     if not SNAPSHOT_RE.match(snapshot_id):
@@ -569,17 +810,70 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
         "overall": "complete" if issues == 0 else "partial",
         "skipped_excluded": skipped,
     }
-    out_path = Path(args.out) if args.out else (root / ".handover" / (task + ".fingerprint.json"))
-    if out_path.is_symlink():
-        print("error: output path is a symlink; refusing to overwrite: %s" % out_path, file=sys.stderr)
+    handover_dir = root / ".handover"
+    if handover_dir.is_symlink():
+        print(
+            "error: .handover is a symlink; refusing to write: %s" % handover_dir,
+            file=sys.stderr,
+        )
         return 2
-    if not args.out and (root / ".handover").is_symlink():
-        print("error: .handover is a symlink; refusing to write: %s" % (root / ".handover"), file=sys.stderr)
-        return 2
-    out = out_path.resolve()
-    if not within_root(root, out):
-        print("error: output must be inside the project root", file=sys.stderr)
-        return 2
+    default_out = handover_dir / (task + SIDECAR_SUFFIX)
+    if args.out:
+        out_path = Path(args.out)
+        if out_path.is_symlink():
+            print(
+                "error: output path is a symlink; refusing to overwrite: %s" % out_path,
+                file=sys.stderr,
+            )
+            return 2
+        out = out_path.resolve()
+        handover_resolved = handover_dir.resolve()
+        allowed_parents = {handover_resolved}
+        archive_resolved = (handover_dir / "archive").resolve()
+        if within_root(handover_resolved, archive_resolved):
+            allowed_parents.add(archive_resolved)
+        if out.parent not in allowed_parents:
+            print(
+                "error: --out must be directly under %s or %s/archive/"
+                % (handover_dir, handover_dir),
+                file=sys.stderr,
+            )
+            return 2
+        if not out.name.endswith(SIDECAR_SUFFIX):
+            print("error: --out must end with %s" % SIDECAR_SUFFIX, file=sys.stderr)
+            return 2
+        if out.name != task + SIDECAR_SUFFIX and not (
+            out.name.startswith(task + "-") and out.name.endswith(SIDECAR_SUFFIX)
+        ):
+            print(
+                "error: --out must be <task>.fingerprint.json or "
+                "<task>-<timestamp>.fingerprint.json",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        out_path = default_out
+        if out_path.is_symlink():
+            print(
+                "error: output path is a symlink; refusing to overwrite: %s" % out_path,
+                file=sys.stderr,
+            )
+            return 2
+        out = out_path.resolve()
+        if not within_root(root, out):
+            print("error: output must be inside the project root", file=sys.stderr)
+            return 2
+    if out.exists():
+        if not out.is_file():
+            print(
+                "error: output path exists and is not a regular file: %s" % out,
+                file=sys.stderr,
+            )
+            return 2
+        reason = existing_sidecar_error(out, root, task)
+        if reason:
+            print("error: refusing to overwrite: %s" % reason, file=sys.stderr)
+            return 2
     out.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=out.name + ".", suffix=".tmp", dir=str(out.parent))
     try:
@@ -602,16 +896,33 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
     print("overall: %s" % payload["overall"])
     print("git_available: %s" % ("true" if git_info.get("available") else "false"))
     print("files: %d ok, %d issue(s)" % (len(rels) - issues, issues))
+    print("content_hashed_files: %d" % len(rels))
+    print("git_status_dirs: %s" % (", ".join(git_info.get("scope_dirs") or []) or "(none)"))
+    print(
+        "coverage_note: content hash covers only the listed files; git status "
+        "monitors the listed directories, not their file contents"
+    )
     if skipped:
         print("skipped_excluded: %s" % ", ".join(skipped))
     return 0
 
 
+def looks_like_legacy_task(text: str) -> bool:
+    """A v1.0-style record starts with a Markdown heading, not frontmatter."""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        return bool(re.match(r"^#{1,6}\s+\S", line))
+    return False
+
+
 def cmd_status_guard(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    if not TASK_RE.match(args.task):
+    error = task_id_error(args.task)
+    if error:
         print("status: unknown")
-        print("reason: invalid task-id")
+        print("reason: %s" % error)
         return 2
     task_file = Path(args.task_file) if args.task_file else (root / ".handover" / (args.task + ".md"))
     task_file = task_file.resolve()
@@ -625,6 +936,21 @@ def cmd_status_guard(args: argparse.Namespace) -> int:
         return 0
     data, status = read_frontmatter(task_file)
     if data is None:
+        if getattr(args, "legacy_migration", False) and status == "missing_frontmatter":
+            try:
+                text = task_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                print("status: unknown")
+                print("reason: read_error: %s" % exc)
+                return 2
+            if looks_like_legacy_task(text):
+                print("status: legacy")
+                print("result: legacy-migration-required")
+                print("action: migrate-frontmatter-then-rerun-status-guard")
+                return 3
+            print("status: unknown")
+            print("reason: frontmatter missing and file is not a recognisable legacy task")
+            return 2
         print("status: unknown")
         print("reason: frontmatter unreadable: %s" % status)
         return 2
@@ -632,13 +958,28 @@ def cmd_status_guard(args: argparse.Namespace) -> int:
         print("status: unknown")
         print("reason: task_id mismatch")
         return 2
+    if not schema_is_current(data.get("schema"), allow_string=True):
+        print("status: unknown")
+        print("reason: schema missing or unsupported")
+        return 2
+    project_root = data.get("project_root")
+    if not project_root:
+        print("status: unknown")
+        print("reason: project_root missing")
+        return 2
+    if Path(str(project_root)).resolve() != root:
+        print("status: unknown")
+        print("reason: project_root mismatch")
+        return 2
     task_status = str(data.get("status") or "unknown")
     print("status: %s" % task_status)
     if task_status in ACTIVE:
+        print("record: valid")
         print("result: active-reuse-allowed")
         return 0
     if task_status in ENDED:
         if args.reopen_authorised:
+            print("record: valid")
             print("result: reopen-authorised")
             print("note: only use after explicit user confirmation")
             return 0
@@ -656,9 +997,10 @@ def cmd_status_guard(args: argparse.Namespace) -> int:
 
 def cmd_check(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    if not TASK_RE.match(args.task):
+    error = task_id_error(args.task)
+    if error:
         print("consistency: unknown")
-        print("reason: invalid task-id")
+        print("reason: %s" % error)
         return 2
 
     sidecar = Path(args.sidecar) if args.sidecar else (root / ".handover" / (args.task + ".fingerprint.json"))
@@ -678,7 +1020,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         print("reason: sidecar unreadable: %s" % exc)
         return 2
 
-    if payload.get("schema") != SCHEMA:
+    if not schema_is_current(payload.get("schema")):
         print("consistency: unknown")
         print("reason: unsupported sidecar schema=%s" % payload.get("schema"))
         return 2
@@ -732,12 +1074,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         print("consistency: unknown")
         print("reason: task frontmatter unreadable: %s" % task_status)
         return 2
-    task_schema = task_data.get("schema")
-    if (
-        not isinstance(task_schema, int)
-        or isinstance(task_schema, bool)
-        or task_schema != SCHEMA
-    ):
+    if not schema_is_current(task_data.get("schema"), allow_string=True):
         print("consistency: unknown")
         print("reason: task schema missing or unsupported")
         return 2
@@ -840,10 +1177,16 @@ def cmd_check(args: argparse.Namespace) -> int:
         print("reason: %s" % "; ".join(incomplete))
         return 2
     print("consistency: matched")
+    print("content_hashed_files: %d" % len(files_payload))
+    print("git_status_dirs: %s" % (", ".join(old_git.get("scope_dirs") or []) or "(none)"))
     print("scope: %d file(s), %d git entries" % (
         len(files_payload),
         len(old_git.get("status_entries") or []),
     ))
+    print(
+        "coverage_note: content hash covers the listed files only; git status "
+        "monitors the listed directories, not their file contents"
+    )
     if current_git is not None and int(current_git.get("ignored_entries") or 0) > 0:
         print(
             "out_of_scope_changes: %d (not part of matched)"
@@ -885,18 +1228,36 @@ def cmd_list(args: argparse.Namespace) -> int:
     archived_rows: List[Tuple[str, str, str, str, str]] = []
     ended_count = 0
     archived_count = 0
-    seen: Dict[str, str] = {}
+    records: List[Dict[str, Any]] = []
 
     for path in iter_task_files(root, include_archive=False):
         rel = str(path.relative_to(root))
         if not within_root(root, path):
-            exception_rows.append(
-                (path.stem, path.stem, "unknown", "-", "path resolves outside project root", rel)
+            records.append(
+                {
+                    "task_id": "",
+                    "title": path.stem,
+                    "status": "unknown",
+                    "fresh": "-",
+                    "updated_at": "-",
+                    "rel": rel,
+                    "reasons": ["path resolves outside project root"],
+                }
             )
             continue
         data, status = read_frontmatter(path)
         if data is None:
-            exception_rows.append((path.stem, path.stem, "unknown", "-", "frontmatter: %s" % status, rel))
+            records.append(
+                {
+                    "task_id": "",
+                    "title": path.stem,
+                    "status": "unknown",
+                    "fresh": "-",
+                    "updated_at": "-",
+                    "rel": rel,
+                    "reasons": ["frontmatter: %s" % status],
+                }
+            )
             continue
         task_id = str(data.get("task_id") or "")
         title = str(data.get("title") or task_id or path.stem)
@@ -906,30 +1267,59 @@ def cmd_list(args: argparse.Namespace) -> int:
         reasons: List[str] = []
         if not task_id:
             reasons.append("missing task_id")
-        else:
-            if task_id in seen:
-                reasons.append("duplicate task_id")
-            else:
-                seen[task_id] = rel
-            if path.stem != task_id:
-                reasons.append("filename/task_id mismatch")
+        elif path.stem != task_id:
+            reasons.append("filename/task_id mismatch")
         schema = data.get("schema")
         if schema is None:
             reasons.append("missing schema")
-        elif not isinstance(schema, int) or schema != SCHEMA:
+        elif not schema_is_current(schema, allow_string=True):
             reasons.append("unsupported schema=%s" % schema)
         if task_status not in KNOWN_STATUS:
             reasons.append("unknown status")
+        records.append(
+            {
+                "task_id": task_id,
+                "title": title,
+                "status": task_status,
+                "fresh": fresh,
+                "updated_at": str(updated_at or "-"),
+                "rel": rel,
+                "reasons": reasons,
+            }
+        )
+
+    # Detect duplicates after reading every record so file ordering cannot
+    # decide which copy stays active: all copies of a duplicated ID move to
+    # EXCEPTIONS.
+    id_counts: Dict[str, int] = {}
+    for record in records:
+        task_id = record["task_id"]
+        if task_id:
+            id_counts[task_id] = id_counts.get(task_id, 0) + 1
+
+    for record in records:
+        task_id = record["task_id"]
+        title = record["title"]
+        task_status = record["status"]
+        fresh = record["fresh"]
+        rel = record["rel"]
+        reasons = list(record["reasons"])
+        if task_id and id_counts.get(task_id, 0) > 1:
+            reasons.append("duplicate task_id (%d files)" % id_counts[task_id])
         if reasons:
-            exception_rows.append((task_id or path.stem, title, task_status, fresh, "; ".join(reasons), rel))
+            exception_rows.append(
+                (task_id or Path(rel).stem, title, task_status, fresh, "; ".join(reasons), rel)
+            )
         elif task_status in ACTIVE:
-            active_rows.append((task_id, title, task_status, fresh, str(updated_at or "-"), rel))
+            active_rows.append((task_id, title, task_status, fresh, record["updated_at"], rel))
         elif task_status in ENDED:
             ended_count += 1
             if include_archive:
-                ended_rows.append((task_id, title, task_status, str(updated_at or "-"), rel))
+                ended_rows.append((task_id, title, task_status, record["updated_at"], rel))
         else:
-            exception_rows.append((task_id or path.stem, title, task_status, fresh, "status unknown", rel))
+            exception_rows.append(
+                (task_id or Path(rel).stem, title, task_status, fresh, "status unknown", rel)
+            )
 
     archive = root / ".handover" / "archive"
     if archive.is_dir():
@@ -1035,8 +1425,9 @@ def split_sections(body_lines: List[str]) -> List[Tuple[str, List[str]]]:
 
 def cmd_stats(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    if not TASK_RE.match(args.task):
-        print("error: invalid task-id: %s" % args.task, file=sys.stderr)
+    error = task_id_error(args.task)
+    if error:
+        print("error: %s" % error, file=sys.stderr)
         return 2
     task_file = Path(args.task_file) if args.task_file else (root / ".handover" / (args.task + ".md"))
     task_file = task_file.resolve()
@@ -1161,24 +1552,33 @@ def find_transcript(
         if path.is_file():
             return path, None
         return None, "transcript not found: %s" % path
-    candidates: List[Path] = []
-    if session:
-        candidates.append(claude_project_dir(root) / (session + ".jsonl"))
-    env_session = os.environ.get("CLAUDE_CODE_SESSION_ID")
-    if env_session:
-        candidates.append(claude_project_dir(root) / (env_session + ".jsonl"))
-    for path in candidates:
-        if path.is_file():
-            return path, None
+    if session and not SESSION_RE.match(session):
+        return None, "invalid session id: %s" % session
     project_dir = claude_project_dir(root)
+    if session:
+        path = project_dir / (session + ".jsonl")
+        if path.is_file() and within_root(project_dir, path):
+            return path, None
+        # An explicit session is a strict selector: never fall back to the
+        # newest transcript when the requested one does not exist.
+        return None, "session transcript not found: %s" % path
+    env_session = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if env_session and SESSION_RE.match(env_session):
+        path = project_dir / (env_session + ".jsonl")
+        if path.is_file() and within_root(project_dir, path):
+            return path, "session from CLAUDE_CODE_SESSION_ID"
     if project_dir.is_dir():
         files = sorted(
-            (p for p in project_dir.glob("*.jsonl") if p.is_file()),
+            (
+                p
+                for p in project_dir.glob("*.jsonl")
+                if p.is_file() and within_root(project_dir, p)
+            ),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
         if files:
-            return files[0], None
+            return files[0], "auto-selected latest transcript: %s" % files[0].name
     return None, "no session transcript found under %s" % project_dir
 
 
@@ -1209,7 +1609,6 @@ def measure_shape(shape: Dict[str, Any]) -> Dict[str, Any]:
                 "index": index,
                 "bytes": len(text.encode("utf-8")),
                 "approx_tokens": tokens,
-                "head": re.sub(r"\s+", " ", text[:80]),
             }
         )
         system_tokens += tokens
@@ -1377,6 +1776,9 @@ def measure_config(root: Path) -> List[Dict[str, Any]]:
 
 def cmd_analysis(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    if args.session and not SESSION_RE.match(args.session):
+        print("error: invalid session id", file=sys.stderr)
+        return 2
     transcript_path, transcript_note = find_transcript(root, args.session, args.transcript)
     if (args.transcript or args.session) and not transcript_path:
         print("error: %s" % (transcript_note or "transcript not found"), file=sys.stderr)
@@ -1618,6 +2020,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_guard.add_argument("--task", required=True)
     p_guard.add_argument("--task-file")
     p_guard.add_argument("--reopen-authorised", action="store_true")
+    p_guard.add_argument(
+        "--legacy-migration",
+        action="store_true",
+        help="report a recognisable frontmatter-less v1.0 record as migration-required",
+    )
     p_guard.set_defaults(func=cmd_status_guard)
 
     p_ignore = sub.add_parser("ignore-check", help="check task data is ignored and untracked")

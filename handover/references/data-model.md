@@ -31,6 +31,8 @@
 
 至少包含：`schema`、`snapshot_id`（可空）、`task_id`、`title`、`status`、`updated_at`（ISO 8601 含时区或 null）、`migrated_at`（可空）、`archived_at`（可空）、`restored_at`（可空）、`project_root`、`branch`、`head`、`worktree`、`fingerprint_file`（可空）、`fingerprint_sha256`（可空）、`fingerprint_scope`（默认 relevant-files+git）、`fingerprint_checked_at`（可空）。
 
+- frontmatter 使用受限的扁平 YAML：每行一个 `key: value`，不支持嵌套、序列、锚点/别名/标签、块标量或多行值。重复键、缩进行、缺少 `: ` 分隔符、未闭合引号等是解析错误 → unknown，不静默忽略。
+- 行内注释 `# ...` 在引号外且前面是空白时会被移除。值本身包含 `#` 或 `: ` 时用引号包裹（如 `title: "Fix: login"`）；数值字段（`schema`、`stale_after_days`）按十进制数字校验，其他全数字值保持字符串，避免 task-id/commit hash 被误转成整数。
 - 缺失或无法解析时标 unknown；`title` 例外：缺失时 `list` 回退显示 task-id，下一次 save 补齐，不批量改写旧任务。
 - 缺失值统一用 `null`，不用空字符串或字符串 "unknown" 充当缺失值。
 - 日期必须是含时区的 ISO 8601 字符串；否则视为无效。
@@ -42,21 +44,24 @@
 
 - `status`：in-progress / pending / blocked / paused / completed / cancelled。`unknown` 只用于缺失、损坏或无法识别的记录，不是用户可选状态。阻塞、等待和暂停分别写明原因。
 - 新建任务默认 `in-progress`；`completed` 只在用户明确确认完成且验收证据存在时写入，声明与证据冲突时用 `blocked`。save 无 ID 时只复用 active 任务；completed/cancelled/archived 不是 save 目标，默认新建任务。只有用户明确说“重开 `<task-id>`”才可重开，并用 `status-guard` 核验。
+- `status-guard` 校验 task_id、schema、project_root 和 status。exit 0 只表示身份/格式/状态允许复用，不是写锁，也不校验正文。旧 1.0.0 记录（无 frontmatter）默认 exit 2；只有显式使用 `status-guard --legacy-migration` 且文件是可识别的 Markdown 旧记录时返回 exit 3（`legacy-migration-required`）。迁移 frontmatter、回读后必须重新运行不带该参数的 `status-guard`，exit 0 才能继续写入；损坏、未闭合 frontmatter、非 Markdown 或未支持 schema 仍 exit 2。
 - `freshness`：fresh / stale / unknown。age = now - updated_at；age >= stale_after_days 为 stale；age < stale_after_days 为 fresh；updated_at 为 null、无效或未来时间等异常为 unknown。stale 只表示需要复核，不覆盖 status，不触发删除。
-- `consistency`：matched / changed / unknown，只在 load 时计算。必须先核对任务 frontmatter 的 `schema`、`task_id`、`project_root`、`snapshot_id`、`fingerprint_file`、`fingerprint_sha256` 与当前项目/sidecar 一致；任一缺失或不匹配 → unknown。
+- `consistency`：matched / changed / unknown，在 load 或 save 的 `check` 步骤中计算。必须先核对任务 frontmatter 的 `schema`、`task_id`、`project_root`、`snapshot_id`、`fingerprint_file`、`fingerprint_sha256` 与当前项目/sidecar 一致；任一缺失或不匹配 → unknown。
+- `check` 只核对 frontmatter 与 sidecar 绑定，不计算任务正文摘要。单独修改正文不会自动变成 unknown；只有 save 更新/清空绑定字段，或用新的 sidecar 覆盖时，旧正文才不再匹配。
 - 指纹包含两部分：声明文件的内容 SHA-256，以及相关范围的 git 现场（branch、HEAD、status 条目）。声明范围 = 任务相关文件 + “接手必读”路径 + 显式提到的路径 + 这些路径所在目录；排除 `.handover/`、`handover.md`、`.claude/` 和 `.git/`。
+- 内容哈希只覆盖 `files` 中明确列出的文件。目录范围只筛选 git status，不对目录内未列出的文件做内容哈希；同目录未声明文件的内容变化若没有改变 git 状态条目，可能不被发现。
 - 目录范围：子目录按子树覆盖；项目根目录按直属文件覆盖（不递归），避免一个根目录文件把整个仓库都算进 matched。`--scope-dir .` 表示根目录直属文件。
 - 没有任何可声明文件时不得生成空基线；`fingerprint` 返回错误，consistency 为 unknown。
 - 当前版本默认排除整个 `.claude/`：这表示 `.claude/` 下的项目配置变化不在一致性检查范围内，不等于断言所有项目配置都不属于任务现场；后续版本可考虑允许显式纳入与任务相关的配置。
 - git 现场覆盖声明范围内的新增、删除、重命名、暂存/未暂存状态变化；范围外的改动只计数，不参与 matched 判断。
 - 结果优先级：已发现明确差异（内容或 git）→ changed，并注明检查是否不完整；未发现明确差异但检查不完整 → unknown；检查完整且无差异 → matched。
-- matched 只表示“声明的检查范围内一致”，不是整个项目一致。
+- matched 只表示“声明的检查范围内一致”：列出的文件内容哈希 + 声明目录的 git 状态。不是整个项目一致，也不是任务正文未被改写。
 - `updated_at` 只在实质 save 时更新；list/load 不刷新。
 - 这些检查只在命令调用时发生，没有后台计时器。
 
 ## 过期、复核与语义陈旧
 
-- `freshness`（时间）和 `consistency`（内容/git）是自动计算的信号；没有后台计时器，只在 list/load 等命令调用时计算。
+- `freshness`（时间）和 `consistency`（内容/git）是自动计算的信号；没有后台计时器，只在 list/load/save 等命令调用时计算。
 - `stale` 只是复核提醒，不是失效或删除；不自动归档、不自动删除。
 - `changed` 表示声明的文件/git 范围有明确变化；`unknown` 表示无法核验（无 sidecar、基线缺失、文件不可读、无 git）。
 - `matched` 只表示“声明范围内一致”，不表示任务语义仍然正确。
@@ -73,6 +78,7 @@
 ## 旧文件与格式迁移
 
 - 只迁移当前 save 的任务；不批量改写。
+- 迁移流程：先运行 `status-guard --legacy-migration` 识别。只有 exit 3（可识别的无 frontmatter Markdown 旧记录）才进入迁移；补 frontmatter 后回读校验 schema/task_id/project_root/status；再运行不带该参数的 `status-guard`，exit 0 才能继续 save。exit 2 表示损坏、未闭合 frontmatter、非 Markdown 或未支持 schema，停止；不要用 `--legacy-migration` 绕过。
 - 迁移只补 frontmatter，不改变任务状态，不把旧记录“洗新”：
   - 能可靠解析旧更新时间则保留；否则 `updated_at = null`，freshness = unknown。
   - 写入 `migrated_at = now`，与 `updated_at` 分开。

@@ -18,7 +18,7 @@ Checks required files, frontmatter keys, code-fence balance, local Markdown link
 python3 -I tests/run_fixture_tests.py
 ```
 
-Runs 55 fixture cases against `handover/scripts/handover.py` in temporary git and non-git projects:
+Runs 82 fixture cases against `handover/scripts/handover.py` in temporary git and non-git projects:
 
 - matched baseline;
 - snapshot binding mismatch;

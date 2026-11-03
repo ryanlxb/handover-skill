@@ -25,6 +25,8 @@ fingerprint_checked_at: null
 > 读取预算：任务文档建议 ≤ 200 行 / ≤ 4k tokens；只写代码/git 里读不到的 delta。`load` 默认只读“快速接手摘要 + 当前进度 + 下一步 + 并行与依赖”，其余按需。
 >
 > Token 卫生：只写高信号 delta；单空行、无装饰分隔线、无行尾空格；避免宽表格；不粘贴代码/diff；必要的空格和标点不要删。同一状态/风险/验证命令只写一处；跨文件重复优先用引用。
+>
+> Frontmatter：受限扁平 YAML，每行一个 `key: value`；不支持嵌套、序列、锚点/标签、块标量或多行值。值含 `#` 或 `: ` 时用引号；重复键、缩进行、未闭合引号是解析错误。
 
 ## 阅读指引
 - `load` 默认读取：快速接手摘要、当前进度、下一步、并行与依赖。
@@ -85,4 +87,4 @@ fingerprint_checked_at: null
 仅在确认该 Skill 存在时记录，例如 `/tdd`、`/code-review`，并写明原因；不要假定一定可用。
 
 ## 指纹说明
-`snapshot_id` / `fingerprint_file` / `fingerprint_sha256` 由 `scripts/handover.py fingerprint` 生成，并由 `check` 核对三者是否属于同一次保存。指纹包含声明文件的内容 SHA-256 与相关 git 现场（branch/HEAD/status）；默认排除 `.handover/`、`handover.md`、`.claude/` 和 `.git/`。脚本不可用、路径不可读、文件过大或无 git 基线时保持为 null，`consistency` 必须为 unknown；不得用 branch/HEAD 代替内容指纹。归档时任务 Markdown 与同 stem 的 `.fingerprint.json` 作为同一记录组移动，不重新生成基线。模板中的示例日期仅作格式示例，不要原样复制到真实任务。
+`snapshot_id` / `fingerprint_file` / `fingerprint_sha256` 由 `scripts/handover.py fingerprint` 生成，并由 `check` 核对三者是否属于同一次保存。指纹包含声明文件的内容 SHA-256 与相关 git 现场（branch/HEAD/status）；内容哈希只覆盖明确列出的文件，目录范围只筛选 git status，不代表目录内所有文件都被哈希。`check` 不计算正文摘要，单独修改正文不会自动变成 unknown。默认排除 `.handover/`、`handover.md`、`.claude/` 和 `.git/`。脚本不可用、路径不可读、文件过大或无 git 基线时保持为 null，`consistency` 必须为 unknown；不得用 branch/HEAD 代替内容指纹。归档时任务 Markdown 与同 stem 的 `.fingerprint.json` 作为同一记录组移动，不重新生成基线。模板中的示例日期仅作格式示例，不要原样复制到真实任务。

@@ -22,10 +22,9 @@ disable-model-invocation: true
 删除：
 - 装饰性空格、对齐空格、行尾空格、连续空行（>1）、水平分隔线（`---` / `***` / `___`）、emoji/ASCII 装饰。
 - 为“好看”增加的空行、缩进、表格 padding。
-- 重复内容：同一状态/风险/验证命令不要在 frontmatter、快速摘要、当前进度、`handover.md` 各写一遍；保留一处权威位置，其他引用。
-- 可从代码/git/spec/commit 直接读取的内容；用 `path#symbol` / commit hash / URL 引用。
+- 重复内容保留一处权威位置，其他引用。
+- 可直接从代码/git/spec/commit 读取的内容用 `path#symbol` / hash / URL 引用。
 - 宽表格；用 `key: value` 或 TSV。
-- 客套话、同义改写、重复解释。
 
 边界：
 - 不删必要结构；不做 zero-space minify；不要为了省 token 牺牲可解析性。
@@ -84,7 +83,7 @@ disable-model-invocation: true
 - 不默认重新运行测试。只运行必要的本地只读检查；遇到命令失败、权限不足或无 Git 时如实记录，不将失败解释为空结果。
 - 不读取或保存密钥、token、密码、私钥、完整 .env、含凭证连接串或不必要的个人信息。环境仅记录变量名、用途和安全获取方式。检查 diff 时避开敏感文件；意外遇到敏感值不回显、不写入交接。
 - Git 项目 `save`/`archive`/`restore` 前确认 `.handover/` 与 `handover.md` 未被跟踪且被 `.gitignore` 覆盖（`git ls-files`/`ignore-check`）；未忽略或已跟踪时提醒，不自动改 `.gitignore` 或 `git rm`。任务数据勿提交。
-- `save` 无 ID 只复用 active；completed/cancelled 不是目标，默认新建 `in-progress`。重开需用户明确授权；`completed` 需用户确认+验收证据，冲突用 `blocked`。
+- `save` 无 ID 只复用 active；completed/cancelled 不是目标，默认新建 `in-progress`。重开需用户明确授权；`completed` 需用户确认+验收证据，冲突用 `blocked`。目标已存在时先运行 `status-guard`（校验 task_id/schema/project_root/status）；exit 0 不是写锁。旧格式迁移走 `--legacy-migration` 独立分支，见 save.md。
 - 不全量读取无关目录、日志或历史任务；不批量读取其他任务正文。使用最少必要上下文，优先引用路径和函数/符号，行号仅辅助定位。优先引用已有 spec、ADR、issue、commit、diff，不重复其内容。
 - 不声称提供强制权限沙箱、并发锁或代码备份。
 
@@ -101,7 +100,7 @@ disable-model-invocation: true
 
 只读取当前记录区 `.handover/` 顶层任务 Markdown 的 YAML frontmatter，不读取正文；`--all` 额外读取归档区 frontmatter。默认只列活跃状态（in-progress/pending/blocked/paused）；`--all` 含 completed/cancelled 与归档。列出 ID、标题、status、freshness、updated_at 和相对路径；标题取 frontmatter 的 `title`，缺失时回退显示 task-id（不读正文）；其他字段缺失标为 unknown。末尾显示被隐藏数量（如 `hidden: completed 3, cancelled 1, archived 2`）。
 
-单独列出“待识别记录”：status 缺失或 unknown、YAML 解析失败、未支持 schema、重复 task-id、文件名与 task_id 不一致。不得静默隐藏或自动选择这些记录。
+单独列出“待识别记录”：status 缺失或 unknown、YAML 解析失败、未支持 schema、重复 task-id、文件名与 task_id 不一致；重复 ID 的所有副本都进入待识别区。不得静默隐藏或自动选择这些记录。
 
 入口不是唯一清单来源，需发现入口未登记的本地任务。索引与任务文件不一致时说明。旧时间只表示需复核，不自动判定失效。任务过多时先列精简清单，明确截断并支持继续，不伪称完整。list 不刷新 `updated_at`。
 
@@ -122,4 +121,4 @@ disable-model-invocation: true
 - 同一会话连续 load 不同任务时，先前任务正文仍在上下文中；切换不相关任务优先新会话或先 `/clear` 再 load。归档、删除任务文件或加载另一任务都不会撤回已读内容。
 - 不要把 `handover.md` 用 `@handover.md` import 进 `CLAUDE.md`；不要在 SessionStart hook 注入全文；最多注入一行“有 in-progress 任务，是否 load”。
 - 没有后台计时器；所有检查只在命令调用时发生。
-- 结构/静态检查、SHA256SUMS 只证明列出的文件与摘要一致，不证明逻辑正确、安装成功或行为安全；以实际文件和真实调用结果为准。截断标记检查只是启发式，不等于自然语言绝无残句。
+- 结构/静态检查、SHA256SUMS 只证明列出的文件与摘要一致，不证明逻辑、安装或行为安全；以实际文件和真实调用为准。截断标记检查只是启发式。

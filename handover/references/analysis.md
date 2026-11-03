@@ -18,7 +18,7 @@
 
    `python3 -I "<skill-dir>/scripts/handover.py" analysis --root <root> [--session <id>] [--transcript <file>] [--context-window <n>] [--json]`
 
-   - 默认从 `~/.claude/projects/<encoded-root>/<session>.jsonl` 找 transcript；优先 `CLAUDE_CODE_SESSION_ID`，否则最新 `.jsonl`。
+   - 默认从 `~/.claude/projects/<encoded-root>/<session>.jsonl` 找 transcript。未指定 `--session`/`--transcript` 时，优先 `CLAUDE_CODE_SESSION_ID`，否则最新 `.jsonl`，并在输出中报告选择来源。显式 `--session` 找不到时直接报错，不回退到其他 transcript；`--session` 必须是安全 ID（字母数字、点、下划线、短横线）。自动发现时不跟随指向项目 transcript 目录外的符号链接。
    - `--context-window` 默认 1,000,000；按实际模型窗口覆盖。
 3. 如果 helper 不可用或 transcript 不存在：
    - 统计磁盘配置大小（CLAUDE.md / rules / memory / skills / task docs）；
@@ -70,5 +70,6 @@ note: request prefix is exact for the latest shape; blobs may include compacted 
 
 - 只读；不写任务、不改配置、不关 MCP server（建议由用户执行）。
 - 不打印 transcript 正文、tool result 内容、密钥或完整路径列表；只输出大小、类别、工具名、server 名。
+- `--json` 与文本输出都只包含大小、类别、工具名、server 名；不包含 system block 前缀文本、tool description 或 message 正文。不要为了“可读性”加回正文片段。
 - transcript 可能包含敏感内容；报告只做聚合。
 - `analysis` 是保留字，不能作为 task-id。

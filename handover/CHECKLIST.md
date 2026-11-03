@@ -1,4 +1,4 @@
-# v1.1.1 验收清单
+# v1.1.2 验收清单
 
 以下为建议测试，不代表已在你的 Claude Code 中执行。结构/静态检查结果见 `VALIDATION.md`；端到端验收需另行执行。
 
@@ -141,3 +141,18 @@
 108. 无 ID `save` 只复用 active 任务（in-progress/pending/blocked/paused）；completed/cancelled/archived 不是目标，默认新建 `in-progress` 任务。
 109. 目标为 completed/cancelled 时 `status-guard` exit 1，`save` 停止并询问新建 task-id 或明确重开；只有用户明确授权重开才使用 `--reopen-authorised` 并记录原因。
 110. 新任务默认 `in-progress`；`completed` 仅在用户明确确认完成且验收证据存在时写入；声明与证据冲突时用 `blocked`，不因 save/clear/context 阈值推断完成。
+
+## v1.1.2 回归
+
+111. `fingerprint --out` 拒绝业务文件、任务 Markdown、项目外路径和非法文件名；只允许 `.handover/` 或 `.handover/archive/` 下同项目、同 task-id 的合法 sidecar。
+112. `fingerprint --out` 的目标已存在但不是同项目/同 task-id 的合法 sidecar 时拒绝覆盖，原文件保持不变。
+113. `analysis` 文本与 `--json` 输出都不包含 system prompt、tool description 或 message 正文片段；不再有 `head` 字段。
+114. `status-guard` 对不支持或布尔 `schema`、缺失或不匹配的 `project_root` 返回 unknown、exit 2。
+115. 旧格式迁移：无 frontmatter 时默认 exit 2；显式 `--legacy-migration` 且文件是可识别 Markdown 旧记录时 exit 3；损坏/未闭合 frontmatter/非 Markdown/未来 schema 仍 exit 2；迁移后重新运行 guard 且 exit 0 才继续。
+116. `ignore-check` 只在 Git 明确返回“not a git repository”时返回 `not-git`；超时、Git 不可用、权限失败返回 `unknown`、exit 2。
+117. `analysis --session <id>` 显式指定但不存在时 exit 2，不回退到其他 transcript；未指定时自动选择并报告来源；非法 session ID 被拒绝。
+118. frontmatter 解析支持行内注释和引号；重复键、缩进、嵌套映射、序列、锚点/标签、未闭合引号被拒绝并标记 unknown，不静默忽略。
+119. `list` 不把布尔 `schema` 当合法值；重复 task-id 的所有副本都进入 EXCEPTIONS，不能保留第一份为 active。
+120. `.handover/config.yaml` 或自动发现的 transcript 符号链接指向项目外时不读取；config 使用默认 `stale_after_days` 并告警，transcript 报告未找到。
+121. 保留字 save/load/brief/list/archive/restore/analysis 在 `fingerprint`/`check`/`status-guard`/`stats` 层被拒绝。
+122. `fingerprint`/`check` 分别报告 `content_hashed_files`、`git_status_dirs`、`coverage_note`；文档明确目录范围只筛选 git status，不等于目录内所有文件内容已校验；`check` 不哈希任务正文。

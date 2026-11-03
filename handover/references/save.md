@@ -20,10 +20,13 @@
 - 无 ID 时只允许沿用 **active** 任务：in-progress / pending / blocked / paused，且必须与当前会话目标明确匹配。
 - completed / cancelled / archived 任务**不是 save 目标**。即使当前会话提到它，也默认新建 task-id；只有用户明确说“重开 `<task-id>`”时，才允许把旧任务作为目标并记录重开原因。“继续”“同一个任务”“收尾”不等于重开授权。
 - 新建任务默认 `status: in-progress`。`completed` 只在用户明确确认完成且验收证据存在时写入；声明与证据冲突时用 `blocked`，不要用 `completed` 掩盖未验证状态。
-- 确定 task-id 后，如果目标文件已存在，先运行 `status-guard`：
-  - exit 0：absent 或 active，可继续；
+- 确定 task-id 后，如果目标文件已存在，先运行 `status-guard`（它校验 task_id、schema、project_root、status）：
+  - exit 0：absent 或 active，且记录身份/格式有效，可继续；`record: valid` 不是写锁，也不校验正文；
   - exit 1：completed/cancelled，停止写入，报告“新建 task-id 还是明确重开”；
-  - exit 2：unknown/错误，停止写入并报告。
+  - exit 2：unknown/错误，停止写入并报告。若原因是 `missing_frontmatter` 且用户明确要求迁移该旧任务，才运行 `status-guard --legacy-migration`：
+    - exit 3 / `legacy-migration-required`：按 [data-model.md](data-model.md) 迁移 frontmatter，回读后重新运行不带该参数的 `status-guard`；只有 exit 0 才继续写入；
+    - exit 2：损坏、未闭合 frontmatter、非 Markdown 或未支持 schema，停止；
+  - 不要把 `--legacy-migration` 当作通用绕过开关。
 - 只有用户明确授权重开时，才使用 `status-guard --reopen-authorised`，并在任务文档“决策与尝试”记录该授权；不要自行推断。
 - save 简报必须报告：task_id、status、新建/复用/重开、选择原因。
 
@@ -67,7 +70,7 @@
 - 写入前重新核对目标文件自读取后是否变化；有变化则停止覆盖并报告。
 - 使用同目录临时文件及安全替换（环境支持时），清理自己创建的临时文件；这不构成并发锁。
 - 新文件也需避免覆盖刚被其他会话创建的文件。无法安全写入时报告失败，不强行覆盖。
-- sidecar 输出路径是符号链接、或默认 `.handover` 是符号链接时，`fingerprint` 会拒绝写入；不要绕过该检查去覆盖业务文件。
+- 默认 sidecar 路径是 `.handover/<task-id>.fingerprint.json`。显式 `--out` 仅允许 `.handover/` 或 `.handover/archive/` 下的 `<task-id>[-<timestamp>].fingerprint.json`，且只在目标已是同项目、同 task-id 的合法 sidecar 时允许覆盖；业务文件和任务 Markdown 一律拒绝。sidecar 输出路径是符号链接、或 `.handover` 是符号链接时，`fingerprint` 会拒绝写入；不要绕过该检查去覆盖业务文件。
 
 ## 6. 指纹
 
@@ -79,6 +82,8 @@
   - 清理临时文件；
   - 运行 `check --task-file <task.md> --expected-sha256 <hash>`，确认任务文件与 sidecar 的 `snapshot_id`/SHA 绑定一致，且检查时现场与刚生成的基线一致。
 - 若 `check` 返回 changed：报告“检查时现场与基线不一致”，不要宣称干净保存；若 unknown：报告不完整基线。该检查不证明正文语义与代码一致，也不证明正文整理期间代码始终未变。
+- `content_hashed_files` 与 `git_status_dirs` 是不同覆盖层：前者只覆盖列出的文件内容，后者只筛选 git status 条目。目录内未列出的文件没有内容哈希保障；同状态内容变化可能不被发现。
+- `check` 不计算任务正文摘要；只改正文不会自动变成 unknown，除非同时更新/清空绑定字段或用新 sidecar 覆盖。
 - 若排除 `.handover/`、`handover.md`、`.claude/`、`.git/` 后没有任何可声明文件，`fingerprint` 会拒绝生成空基线；不要写“0 文件 matched”。这些绑定字段置 null，并明确 consistency 将为 unknown。
 - 无法生成时这些字段置 null，并明确 consistency 将为 unknown。
 - 详细规则见 [fingerprint.md](fingerprint.md)。

@@ -1,4 +1,51 @@
-# handover v1.1.1
+# handover v1.1.2
+
+- Date: 2026-11-03
+- Status: **v1.1.2** — security/consistency patch over `v1.1.1`; controlled trial only, not a stable release.
+- Install: copy `handover/` to `~/.claude/skills/handover/`; back up any existing skill first.
+- Package integrity: `handover/SHA256SUMS.txt` covers the 15 skill package files.
+
+## What changed since v1.1.1
+
+- `fingerprint --out` can no longer overwrite arbitrary business files. The default output is `.handover/<task-id>.fingerprint.json`; a custom `--out` must be directly under `.handover/` or `.handover/archive/`, use a `<task-id>[-<timestamp>].fingerprint.json` name, and may only replace an existing sidecar for the same project and task.
+- `analysis --json` no longer emits the first 80 characters of each system block. Text and JSON output contain only sizes, categories, tool names, and server names.
+- `status-guard` now validates `schema` and `project_root` in addition to `task_id` and `status`. `--legacy-migration` adds a separate exit-3 branch for recognisable frontmatter-less v1.0 records; corrupt, unclosed, non-Markdown, or unsupported-schema files remain exit 2.
+- `ignore-check` reports `not-git` only when Git explicitly says “not a git repository”. Timeouts, a missing git executable, permission failures, and other Git errors return `unknown`, exit 2.
+- `analysis --session <id>` is strict: a missing explicit session is an error and never falls back to another transcript. Session IDs are validated, and auto-discovered transcripts that resolve outside the project transcript directory are ignored.
+- Frontmatter parsing is now a restricted flat-YAML subset: inline comments and quoted values work; duplicate keys, indentation, nested mappings, sequences, anchors/tags, block scalars, and unclosed quotes are parse errors instead of being silently ignored.
+- `list` rejects boolean `schema` and moves every copy of a duplicate task ID to EXCEPTIONS; file ordering no longer decides which copy stays active.
+- `.handover/config.yaml` symlinks that resolve outside the project are not read; the default `stale_after_days` is used with a warning.
+- Reserved task IDs (`save`/`load`/`brief`/`list`/`archive`/`restore`/`analysis`) are rejected by `fingerprint`, `check`, `status-guard`, and `stats`.
+- `fingerprint` and `check` report `content_hashed_files`, `git_status_dirs`, and `coverage_note` separately. Documentation now states that directory scope filters git status entries and does not hash every file in those directories; `check` also does not hash the task body.
+
+## Validation
+
+- Static validator: PASS.
+- Fixture suite: 82/82 PASS (27 new cases covering the v1.1.2 fixes and the two documented scope boundaries).
+- `SHA256SUMS.txt`: 15/15 OK.
+- No new headless save/load smoke or real Claude Code E2E was run for v1.1.2. The v1.1.1 smokes and rc.1 E2E records were not rerun after these changes.
+
+## Scope and limitations
+
+- `check` still covers only declared content hashes plus git status for declared directories. A same-directory file not listed in `files`, whose content changes without changing its git status, can remain `matched`.
+- `check` does not hash the task body; editing only the body while keeping frontmatter and the sidecar unchanged can remain `matched`.
+- Real business-project trial, real 1.0.0 artifact migration, concurrency, archive/restore failure paths, and normal interactive permission modes remain unvalidated.
+- No full code audit or security guarantee. Checksums verify content consistency; static checks verify only their listed rules; fixtures and E2E evidence have separate bounded scopes.
+
+## Key hashes
+
+| File | SHA-256 |
+|---|---|
+| `handover/SKILL.md` | `46f80c24288d54977bd1dd2a4ad5b4c98a1b909d7fc73299aa59c133e252c96e` |
+| `handover/scripts/handover.py` | `dff71bddeb79ca28cb3696092de94996808fd935ca94b3e4b7b4f62b0b0e663d` |
+| `handover/README.md` | `cbd95296935031a2e6a8c309fc1cbcd5b83db1e585aa65e85f02b261f5319279` |
+| `handover/CHECKLIST.md` | `e295f4f8fa561fb4e473bbb80bc81af64d08f15bc8f7690f3dbeb1e4033021f5` |
+
+The full package manifest is `handover/SHA256SUMS.txt`.
+
+---
+
+# handover v1.1.1 (historical release)
 
 - Date: 2026-11-03
 - Status: **v1.1.1** — patch release over `v1.1.0`.

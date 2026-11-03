@@ -53,10 +53,16 @@ CASES: List[Dict[str, object]] = []
 TEMP_PATHS: List[Path] = []
 
 
-def run(args: List[str], cwd: Optional[Path] = None) -> Tuple[int, str, str]:
+def run(
+    args: List[str],
+    cwd: Optional[Path] = None,
+    env_extra: Optional[Dict[str, str]] = None,
+) -> Tuple[int, str, str]:
     env = dict(os.environ)
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_CONFIG_NOSYSTEM"] = "1"
+    if env_extra:
+        env.update(env_extra)
     proc = subprocess.run(
         [sys.executable, "-I", str(SCRIPT)] + args,
         cwd=str(cwd) if cwd else None,
@@ -911,6 +917,632 @@ def case_list_duplicate_task_id() -> None:
     record("list：重复 task_id 可见", "duplicate task_id", code, out, err, ok)
 
 
+def case_list_duplicate_all_exceptions() -> None:
+    root = make_root()
+    shutil.copy(root / ".handover" / "login.md", root / ".handover" / "copy.md")
+    code, out, err = run(["list", "--root", str(root)])
+    active = out.split("## EXCEPTIONS")[0]
+    ok = (
+        code == 0
+        and "| login |" not in active
+        and "duplicate task_id (2 files)" in out
+    )
+    record(
+        "list：重复 ID 的所有记录都进入 EXCEPTIONS",
+        "no duplicate in ACTIVE",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_list_schema_bool_exception() -> None:
+    root = make_root()
+    set_task_text(root, "schema: 1", "schema: true")
+    code, out, err = run(["list", "--root", str(root)])
+    active = out.split("## EXCEPTIONS")[0]
+    ok = code == 0 and "| login |" not in active and "unsupported schema=True" in out
+    record("list：schema 为布尔值不进入 ACTIVE", "exception, not active", code, out, err, ok)
+
+
+def case_fingerprint_out_business_file_refused() -> None:
+    root = make_root()
+    business = root / "src" / "business.py"
+    original = "print('keep me')\n"
+    business.write_text(original, encoding="utf-8")
+    pfile = paths_file(root, ["src/login.ts"])
+    code, out, err = run(
+        [
+            "fingerprint",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--paths",
+            str(pfile),
+            "--out",
+            str(business),
+        ]
+    )
+    ok = (
+        code == 2
+        and "--out must be" in err
+        and business.read_text(encoding="utf-8") == original
+    )
+    record(
+        "fingerprint --out 不能覆盖业务文件",
+        "exit 2, business file unchanged",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_fingerprint_out_task_markdown_refused() -> None:
+    root = make_root()
+    task = root / ".handover" / "login.md"
+    original = task.read_text(encoding="utf-8")
+    pfile = paths_file(root, ["src/login.ts"])
+    code, out, err = run(
+        [
+            "fingerprint",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--paths",
+            str(pfile),
+            "--out",
+            str(task),
+        ]
+    )
+    ok = (
+        code == 2
+        and "must end with" in err
+        and task.read_text(encoding="utf-8") == original
+    )
+    record(
+        "fingerprint --out 不能覆盖任务 Markdown",
+        "exit 2, task unchanged",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_fingerprint_out_valid_archive_sidecar() -> None:
+    root = make_root()
+    pfile = paths_file(root, ["src/login.ts"])
+    archive = root / ".handover" / "archive" / "login-20261103t000000z.fingerprint.json"
+    code, out, err = run(
+        [
+            "fingerprint",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--paths",
+            str(pfile),
+            "--out",
+            str(archive),
+        ]
+    )
+    ok = code == 0 and archive.is_file()
+    if ok:
+        try:
+            data = json.loads(archive.read_text(encoding="utf-8"))
+            ok = data.get("task_id") == "login" and data.get("schema") == 1
+        except ValueError:
+            ok = False
+    record(
+        "fingerprint --out 允许 .handover/archive 下的归档 sidecar",
+        "exit 0, sidecar written",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_fingerprint_out_existing_invalid_refused() -> None:
+    root = make_root()
+    target = root / ".handover" / "login.fingerprint.json"
+    original = (
+        json.dumps(
+            {
+                "schema": 1,
+                "task_id": "other",
+                "root": str(root),
+                "snapshot_id": "x",
+                "files": {"a": {}},
+            }
+        )
+        + "\n"
+    )
+    target.write_text(original, encoding="utf-8")
+    pfile = paths_file(root, ["src/login.ts"])
+    code, out, err = run(
+        ["fingerprint", "--root", str(root), "--task", "login", "--paths", str(pfile)]
+    )
+    ok = (
+        code == 2
+        and "refusing to overwrite" in err
+        and target.read_text(encoding="utf-8") == original
+    )
+    record(
+        "fingerprint 拒绝覆盖其他任务的 sidecar",
+        "exit 2, existing sidecar unchanged",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_fingerprint_out_outside_root_refused() -> None:
+    root = make_root()
+    outside = root.parent / (root.name + "-outside.fingerprint.json")
+    TEMP_PATHS.append(outside)
+    pfile = paths_file(root, ["src/login.ts"])
+    code, out, err = run(
+        [
+            "fingerprint",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--paths",
+            str(pfile),
+            "--out",
+            str(outside),
+        ]
+    )
+    ok = code == 2 and "--out must be" in err and not outside.exists()
+    record("fingerprint --out 不能写到项目外", "exit 2, no file", code, out, err, ok)
+
+
+def case_fingerprint_out_archive_symlink_outside() -> None:
+    root = make_root()
+    outside = root.parent / (root.name + "-outside-archive")
+    outside.mkdir()
+    TEMP_PATHS.append(outside)
+    archive = root / ".handover" / "archive"
+    archive.symlink_to(outside, target_is_directory=True)
+    pfile = paths_file(root, ["src/login.ts"])
+    target = archive / "login-20261103t000000z.fingerprint.json"
+    code, out, err = run(
+        [
+            "fingerprint",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--paths",
+            str(pfile),
+            "--out",
+            str(target),
+        ]
+    )
+    ok = (
+        code == 2
+        and "--out must be" in err
+        and not (outside / target.name).exists()
+    )
+    record(
+        "fingerprint --out 不能通过 archive 符号链接写到项目外",
+        "exit 2, no file",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_fingerprint_reserved_task() -> None:
+    root = make_root()
+    pfile = paths_file(root, ["src/login.ts"])
+    code, out, err = run(
+        ["fingerprint", "--root", str(root), "--task", "analysis", "--paths", str(pfile)]
+    )
+    ok = code == 2 and "reserved task-id" in err
+    record("fingerprint 拒绝保留字 task-id", "exit 2, reserved", code, out, err, ok)
+
+
+def case_analysis_json_no_content_leak() -> None:
+    root = make_root()
+    marker = "SECRET_SYSTEM_PROMPT_MARKER"
+    tool_marker = "SECRET_TOOL_DESCRIPTION_MARKER"
+    shape = {
+        "system": [{"type": "text", "text": marker + " " + "x" * 200}],
+        "tools": [
+            {
+                "name": "Bash",
+                "description": tool_marker,
+                "input_schema": {"type": "object"},
+            }
+        ],
+    }
+    transcript = write_transcript(root, [shape], [])
+    code, out, err = run(
+        ["analysis", "--root", str(root), "--transcript", str(transcript), "--json"]
+    )
+    code2, out2, err2 = run(
+        ["analysis", "--root", str(root), "--transcript", str(transcript)]
+    )
+    ok = (
+        code == 0
+        and code2 == 0
+        and marker not in out
+        and marker not in out2
+        and tool_marker not in out
+        and tool_marker not in out2
+        and '"head"' not in out
+    )
+    record(
+        "analysis 不输出 system/tool 正文片段",
+        "no markers, no head field",
+        code,
+        out + "\n---\n" + out2,
+        err + "\n---\n" + err2,
+        ok,
+    )
+
+
+def case_analysis_explicit_session_strict() -> None:
+    root = make_root()
+    home = Path(tempfile.mkdtemp(prefix="handover-home-"))
+    TEMP_PATHS.append(home)
+    encoded = re.sub(r"[^A-Za-z0-9]", "-", str(root.resolve()))
+    project_dir = home / ".claude" / "projects" / encoded
+    project_dir.mkdir(parents=True)
+    (project_dir / "other.jsonl").write_text("{}\n", encoding="utf-8")
+    env_extra = {"HOME": str(home), "CLAUDE_CODE_SESSION_ID": ""}
+    code_missing, out_missing, err_missing = run(
+        ["analysis", "--root", str(root), "--session", "missing-session"],
+        env_extra=env_extra,
+    )
+    ok_missing = code_missing == 2 and "session transcript not found" in err_missing
+    code_auto, out_auto, err_auto = run(
+        ["analysis", "--root", str(root)], env_extra=env_extra
+    )
+    ok_auto = (
+        code_auto == 0
+        and "auto-selected latest transcript: other.jsonl" in out_auto
+    )
+    code_bad, out_bad, err_bad = run(
+        ["analysis", "--root", str(root), "--session", "../escape"],
+        env_extra=env_extra,
+    )
+    ok_bad = code_bad == 2 and "invalid session id" in err_bad
+    record(
+        "analysis：显式 session 缺失不回退；未指定时才自动选择",
+        "missing exit 2; auto note; invalid exit 2",
+        code_missing,
+        "\n---\n".join([out_missing, out_auto, out_bad]),
+        "\n---\n".join([err_missing, err_auto, err_bad]),
+        ok_missing and ok_auto and ok_bad,
+    )
+
+
+def case_analysis_transcript_symlink_outside() -> None:
+    root = make_root()
+    home = Path(tempfile.mkdtemp(prefix="handover-home-"))
+    TEMP_PATHS.append(home)
+    encoded = re.sub(r"[^A-Za-z0-9]", "-", str(root.resolve()))
+    project_dir = home / ".claude" / "projects" / encoded
+    project_dir.mkdir(parents=True)
+    outside = home / "outside.jsonl"
+    marker = "OUTSIDE_TRANSCRIPT_MARKER"
+    outside.write_text(
+        json.dumps(
+            {
+                "type": "api-request-shape",
+                "timestamp": "2026-11-03T00:00:01Z",
+                "shape": {"system": [{"type": "text", "text": marker}]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (project_dir / "leak.jsonl").symlink_to(outside)
+    env_extra = {"HOME": str(home), "CLAUDE_CODE_SESSION_ID": ""}
+    code, out, err = run(["analysis", "--root", str(root)], env_extra=env_extra)
+    ok = code == 0 and marker not in out and "transcript: (not found)" in out
+    record(
+        "analysis 不读取项目 transcript 目录外的符号链接",
+        "not found, no content",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_ignore_check_git_error() -> None:
+    root = make_root(with_git=False)
+    fake_bin = root.parent / (root.name + "-fakebin")
+    fake_bin.mkdir()
+    TEMP_PATHS.append(fake_bin)
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        "#!/bin/sh\necho 'fatal: unable to access repository' >&2\nexit 128\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    env_extra = {"PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", "")}
+    code, out, err = run(["ignore-check", "--root", str(root)], env_extra=env_extra)
+    ok = code == 2 and "result: unknown" in out
+    record(
+        "ignore-check：git 执行失败不被当作非 Git",
+        "unknown, exit 2",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_status_guard_schema_invalid() -> None:
+    root = make_root()
+    set_task_text(root, "schema: 1", "schema: 999")
+    code, out, err = status_guard(root)
+    ok_bad = code == 2 and "schema" in out
+    set_task_text(root, "schema: 999", "schema: true")
+    code2, out2, err2 = status_guard(root)
+    ok_bool = code2 == 2 and "schema" in out2
+    record(
+        "status-guard 拒绝不支持/布尔 schema",
+        "unknown, exit 2",
+        code,
+        out + "\n---\n" + out2,
+        err + "\n---\n" + err2,
+        ok_bad and ok_bool,
+    )
+
+
+def case_status_guard_project_root_mismatch() -> None:
+    root = make_root()
+    set_task_text(root, "project_root: %s" % root, "project_root: %s-other" % root)
+    code, out, err = status_guard(root)
+    ok = code == 2 and "project_root mismatch" in out
+    record("status-guard 拒绝其他项目的记录", "unknown, exit 2", code, out, err, ok)
+
+
+def case_status_guard_legacy_migration_branch() -> None:
+    root = make_root()
+    task = root / ".handover" / "login.md"
+    task.write_text("# Legacy login\n\n## 当前进度\n- old\n", encoding="utf-8")
+    code_plain, out_plain, err_plain = status_guard(root)
+    ok_plain = code_plain == 2 and "missing_frontmatter" in out_plain
+    code_legacy, out_legacy, err_legacy = status_guard(root, extra=["--legacy-migration"])
+    ok_legacy = code_legacy == 3 and "legacy-migration-required" in out_legacy
+    task.write_text("not a markdown heading\n", encoding="utf-8")
+    code_corrupt, out_corrupt, err_corrupt = status_guard(
+        root, extra=["--legacy-migration"]
+    )
+    ok_corrupt = code_corrupt == 2 and "not a recognisable legacy task" in out_corrupt
+    task.write_text("---\ntask_id: login\n", encoding="utf-8")
+    code_unclosed, out_unclosed, err_unclosed = status_guard(
+        root, extra=["--legacy-migration"]
+    )
+    ok_unclosed = code_unclosed == 2 and "unclosed_frontmatter" in out_unclosed
+    record(
+        "status-guard 旧格式迁移分支：仅可识别旧记录 exit 3",
+        "plain exit 2; legacy exit 3; corrupt/unclosed exit 2",
+        code_legacy,
+        "\n---\n".join([out_plain, out_legacy, out_corrupt, out_unclosed]),
+        "\n---\n".join([err_plain, err_legacy, err_corrupt, err_unclosed]),
+        ok_plain and ok_legacy and ok_corrupt and ok_unclosed,
+    )
+
+
+def case_parse_inline_comments_and_quotes() -> None:
+    root = make_root()
+    set_task_text(root, "schema: 1", "schema: 1 # current schema")
+    set_task_text(root, "title: Login task", 'title: "Login # task"')
+    set_task_text(root, "status: in-progress", "status: in-progress # active")
+    code, out, err = run(["list", "--root", str(root)])
+    ok = code == 0 and "| login | Login # task | in-progress |" in out
+    code2, out2, err2 = status_guard(root)
+    ok = ok and code2 == 0 and "active-reuse-allowed" in out2
+    record(
+        "受限 YAML：行内注释与引号内 # 正确处理",
+        "list/status-guard succeed",
+        code,
+        out + "\n---\n" + out2,
+        err + "\n---\n" + err2,
+        ok,
+    )
+
+
+def case_parse_apostrophe_in_plain_scalar() -> None:
+    root = make_root()
+    set_task_text(root, "title: Login task", "title: It's fine")
+    code, out, err = run(["list", "--root", str(root)])
+    ok = code == 0 and "| login | It's fine | in-progress |" in out
+    code2, out2, err2 = status_guard(root)
+    ok = ok and code2 == 0 and "active-reuse-allowed" in out2
+    record(
+        "受限 YAML：普通标量中的撇号不被当作引号",
+        "list/status-guard succeed",
+        code,
+        out + "\n---\n" + out2,
+        err + "\n---\n" + err2,
+        ok,
+    )
+
+
+def case_parse_single_quoted_apostrophe() -> None:
+    root = make_root()
+    set_task_text(root, "title: Login task", "title: 'It''s fine'")
+    code, out, err = run(["list", "--root", str(root)])
+    ok = code == 0 and "| login | It's fine | in-progress |" in out
+    code2, out2, err2 = status_guard(root)
+    ok = ok and code2 == 0 and "active-reuse-allowed" in out2
+    record(
+        "受限 YAML：单引号标量中的 '' 转义",
+        "list/status-guard succeed",
+        code,
+        out + "\n---\n" + out2,
+        err + "\n---\n" + err2,
+        ok,
+    )
+
+
+def case_parse_duplicate_key_rejected() -> None:
+    root = make_root()
+    task = root / ".handover" / "login.md"
+    text = task.read_text(encoding="utf-8")
+    text = text.replace(
+        "status: in-progress\n", "status: in-progress\nstatus: pending\n", 1
+    )
+    task.write_text(text, encoding="utf-8")
+    code, out, err = run(["list", "--root", str(root)])
+    ok_list = code == 0 and "duplicate_key" in out
+    code2, out2, err2 = status_guard(root)
+    ok_guard = code2 == 2 and "duplicate_key" in out2
+    record(
+        "受限 YAML：重复键被拒绝而非后者覆盖",
+        "exception + exit 2",
+        code,
+        out + "\n---\n" + out2,
+        err + "\n---\n" + err2,
+        ok_list and ok_guard,
+    )
+
+
+def case_parse_unsupported_syntax_rejected() -> None:
+    root = make_root()
+    set_task_text(root, "title: Login task", "title: [Login, task]")
+    code, out, err = status_guard(root)
+    ok_bracket = code == 2 and "unsupported_syntax" in out
+    set_task_text(root, "title: [Login, task]", "title: Fix: login")
+    code2, out2, err2 = status_guard(root)
+    ok_nested = code2 == 2 and "unsupported_syntax" in out2
+    set_task_text(root, "title: Fix: login", "  title: indented")
+    code3, out3, err3 = status_guard(root)
+    ok_indent = code3 == 2 and "indented_line" in out3
+    set_task_text(root, "  title: indented", "title: 'It's fine'")
+    code4, out4, err4 = status_guard(root)
+    ok_trailing = code4 == 2 and "invalid_quoted_value" in out4
+    record(
+        "受限 YAML：序列/嵌套映射/缩进/引号尾随内容被拒绝",
+        "exit 2 with parse error",
+        code,
+        out + "\n---\n" + out2 + "\n---\n" + out3 + "\n---\n" + out4,
+        err + "\n---\n" + err2 + "\n---\n" + err3 + "\n---\n" + err4,
+        ok_bracket and ok_nested and ok_indent and ok_trailing,
+    )
+
+
+def case_config_symlink_outside() -> None:
+    root = make_root()
+    outside = root.parent / (root.name + "-config.yaml")
+    outside.write_text("stale_after_days: 1\n", encoding="utf-8")
+    TEMP_PATHS.append(outside)
+    config = root / ".handover" / "config.yaml"
+    config.unlink()
+    config.symlink_to(outside)
+    recent = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
+    set_task_text(root, "updated_at: 2026-11-01T10:00:00+08:00", "updated_at: %s" % recent)
+    code, out, err = run(["list", "--root", str(root)])
+    ok = (
+        code == 0
+        and "outside project root" in err
+        and "| login | Login task | in-progress | fresh |" in out
+    )
+    record(
+        "config 符号链接指向项目外时不读取",
+        "warning + default freshness",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_fingerprint_scope_report() -> None:
+    root = make_root()
+    _, _, out = fingerprint(root, ["src/login.ts"])
+    ok = (
+        "content_hashed_files: 1" in out
+        and "git_status_dirs: src/" in out
+        and "coverage_note:" in out
+    )
+    record("fingerprint 报告内容哈希与 git 状态范围", "coverage lines", 0, out, "", ok)
+
+
+def case_check_matched_scope_report() -> None:
+    root = make_root()
+    snap, sha, _ = fingerprint(root, ["src/login.ts"])
+    bind_task(root, snap, sha)
+    code, out, err = check(root, sha)
+    ok = (
+        code == 0
+        and "content_hashed_files: 1" in out
+        and "git_status_dirs: src/" in out
+        and "coverage_note:" in out
+    )
+    record("check matched 报告覆盖范围", "coverage lines", code, out, err, ok)
+
+
+def case_directory_sibling_status_unchanged() -> None:
+    root = make_root()
+    other = root / "src" / "other.ts"
+    other.write_text("export const other = 2;\n", encoding="utf-8")
+    snap, sha, _ = fingerprint(root, ["src/login.ts"])
+    bind_task(root, snap, sha)
+    other.write_text("export const other = 3;\n", encoding="utf-8")
+    code, out, err = check(root, sha)
+    ok = code == 0 and "consistency: matched" in out
+    record(
+        "目录内未声明文件：同状态内容变化不被内容哈希发现（记录边界）",
+        "matched (documented limitation)",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_task_body_edit_not_detected() -> None:
+    root = make_root()
+    snap, sha, _ = fingerprint(root, ["src/login.ts"])
+    bind_task(root, snap, sha)
+    set_task_text(root, "- 目标：fixture", "- 目标：changed after save")
+    code, out, err = check(root, sha)
+    ok = code == 0 and "consistency: matched" in out
+    record(
+        "只改任务正文不更新 frontmatter：check 仍 matched（记录边界）",
+        "matched (documented limitation)",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_check_sidecar_schema_bool() -> None:
+    root = make_root()
+    snap, sha, _ = fingerprint(root, ["src/login.ts"])
+    bind_task(root, snap, sha)
+    sidecar = root / ".handover" / "login.fingerprint.json"
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    data["schema"] = True
+    sidecar.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    new_sha = hashlib.sha256(sidecar.read_bytes()).hexdigest()
+    set_task_text(root, "fingerprint_sha256: %s" % sha, "fingerprint_sha256: %s" % new_sha)
+    code, out, err = check(root, new_sha)
+    ok = code == 2 and "schema" in out
+    record("check 拒绝布尔 sidecar schema", "unknown, exit 2", code, out, err, ok)
+
+
 def _run_tests() -> int:
     tests = [
         case_matched,
@@ -964,6 +1596,33 @@ def _run_tests() -> int:
         case_check_out_of_scope_note,
         case_check_size_change_over_limit,
         case_list_duplicate_task_id,
+        case_list_duplicate_all_exceptions,
+        case_list_schema_bool_exception,
+        case_fingerprint_out_business_file_refused,
+        case_fingerprint_out_task_markdown_refused,
+        case_fingerprint_out_valid_archive_sidecar,
+        case_fingerprint_out_existing_invalid_refused,
+        case_fingerprint_out_outside_root_refused,
+        case_fingerprint_out_archive_symlink_outside,
+        case_fingerprint_reserved_task,
+        case_analysis_transcript_symlink_outside,
+        case_ignore_check_git_error,
+        case_status_guard_schema_invalid,
+        case_status_guard_project_root_mismatch,
+        case_status_guard_legacy_migration_branch,
+        case_parse_inline_comments_and_quotes,
+        case_parse_apostrophe_in_plain_scalar,
+        case_parse_single_quoted_apostrophe,
+        case_parse_duplicate_key_rejected,
+        case_parse_unsupported_syntax_rejected,
+        case_config_symlink_outside,
+        case_fingerprint_scope_report,
+        case_check_matched_scope_report,
+        case_directory_sibling_status_unchanged,
+        case_task_body_edit_not_detected,
+        case_check_sidecar_schema_bool,
+        case_analysis_json_no_content_leak,
+        case_analysis_explicit_session_strict,
         case_analysis_text,
         case_analysis_json,
         case_analysis_missing_transcript,
@@ -985,7 +1644,7 @@ def _run_tests() -> int:
             )
 
     passed = sum(1 for case in CASES if case["passed"])
-    print("# v1.1.1 Fixture Test Results")
+    print("# v1.1.2 Fixture Test Results")
     print("")
     print("- Date (UTC): %s" % datetime.now(timezone.utc).isoformat(timespec="seconds"))
     try:

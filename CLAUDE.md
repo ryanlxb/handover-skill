@@ -28,7 +28,7 @@ python3 -I tests/run_fixture_tests.py
 
 `validate_handover.py` checks required files, frontmatter keys, code-fence balance, local Markdown links, truncation markers, and Python syntax. It prints a Markdown report and exits non-zero on errors.
 
-`run_fixture_tests.py` runs 55 cases against `handover/scripts/handover.py` in temporary git and non-git projects. It prints a Markdown report and exits non-zero on failures. There is no single-case flag; run the full suite, or temporarily narrow the `tests` list in `tests/run_fixture_tests.py` when debugging one case.
+`run_fixture_tests.py` runs 82 cases against `handover/scripts/handover.py` in temporary git and non-git projects. It prints a Markdown report and exits non-zero on failures. There is no single-case flag; run the full suite, or temporarily narrow the `tests` list in `tests/run_fixture_tests.py` when debugging one case.
 
 ### Helper CLI
 
