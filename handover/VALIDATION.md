@@ -1,6 +1,6 @@
 # v1.1.2 Validation Report
 
-- Date (UTC): 2026-11-03T09:36:58+00:00
+- Date (UTC): 2026-11-03T10:27:46+00:00
 - Target: `handover`
 - Scope: structural/static checks only; no installation, no skill execution.
 
@@ -9,9 +9,9 @@
 | file | lines | bytes | fences |
 |---|---:|---:|---|
 | CHECKLIST.md | 158 | 15803 | OK |
-| E2E_TEST_RESULTS.md | 242 | 14778 | OK |
-| FIXTURE_TEST_RESULTS.md | 95 | 8167 | OK |
-| README.md | 325 | 28030 | OK |
+| E2E_TEST_RESULTS.md | 296 | 19974 | OK |
+| FIXTURE_TEST_RESULTS.md | 97 | 8395 | OK |
+| README.md | 325 | 27874 | OK |
 | SKILL.md | 124 | 11998 | OK |
 | SOURCES.md | 18 | 1901 | OK |
 | references/analysis.md | 75 | 3614 | OK |

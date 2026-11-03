@@ -1,4 +1,58 @@
-# v1.1.0-rc.1 Claude Code E2E Test Results
+# Claude Code E2E Test Results
+
+- Current record: v1.1.2 (2026-11-03)
+- Historical record: v1.1.0-rc.1 (2026-11-02), preserved below.
+
+## v1.1.2 headless E2E
+
+- Date: 2026-11-03
+- Version: v1.1.2
+- Claude Code: 2.1.300
+- Model gateway: custom gateway (name withheld); the harness printed `unrecognized_model` at startup and execution continued.
+- Isolation: installed as a project-local copy renamed to `handover-v112`, so the globally installed v1.1.1 `handover` skill could not shadow it. The skill content, references, and scripts under test are v1.1.2; only the frontmatter `name` and invocation name were changed.
+- Invocation: `claude -p "<slash command>" --permission-mode dontAsk --allowedTools "Read Write Edit Glob Grep Bash" --max-turns <n> --no-session-persistence`
+- Scope: real Claude Code skill invocation in one temporary git project. This is not a real business project and not a multi-model or multi-permission-mode matrix.
+
+### Results
+
+| Case | Expected | Observed | Result |
+|---|---|---|---|
+| `save` (new task) | Create task, sidecar, and entry; no business-code change; `check` matched | Created `.handover/demo.md`, `.handover/demo.fingerprint.json`, `handover.md`; 3 content-hashed files; `snapshot_id` recorded; `check` matched; `ignore-check` ok | PASS |
+| Fresh-session `load` | Read-only; `matched`; no status/`updated_at` change | Task and sidecar SHA-256 unchanged; `matched`; ~1.6k tokens read | PASS |
+| Modify declared file, then `load` | `changed` with `content_changed` | `changed`; ` M src/login.ts`; `incomplete: false` | PASS |
+| Re-`save` | Reuse active task; new baseline; `matched` | `active-reuse-allowed`; new `snapshot_id`; `updated_at` updated; `check` matched | PASS |
+| `save` on completed task | Stop without overwriting; ask to reopen or create a new task | `status-guard` exit 1; skill wrote nothing; task stayed `completed`; reopen/new-task options reported | PASS |
+| Legacy migration | Plain guard exit 2; `--legacy-migration` exit 3; migrate then re-guard | Both exits observed; frontmatter added; re-guard exit 2 because migrated `status: unknown`; save stopped without inventing a status | PASS for the branch; task remains unactivated |
+| `archive` | Move task + sidecar as one group; preserve baseline; update entry | Both files moved; `fingerprint_sha256` and `updated_at` unchanged; entry updated; `check` matched | PASS |
+| `restore` | Return group; status `paused`; preserve baseline and timestamps | Group restored; `status: paused`; `archived_at` preserved; `restored_at` set; `fingerprint_sha256` unchanged; `check` matched | PASS |
+| `list --all` | Active + exceptions; ignore non-task backups | `demo` shown paused; `legacy` shown as unknown exception; `.handover/demo.md.bak` not treated as a task | PASS |
+| `brief` | Project background + summary state; no full task body | Read entry/frontmatter and opening sections only; ~1.4k tokens; reported skipped content | PASS |
+| `fingerprint --out` business file | Exit 2; file unchanged | Exit 2 with path restriction; business file unchanged | PASS |
+| `fingerprint --out` task Markdown | Exit 2; task unchanged | Exit 2 with filename restriction; task unchanged | PASS |
+| `analysis --json` content probe | No system/tool text; no `head` field | Synthetic transcript markers absent; no `head` field | PASS |
+
+### Detailed observations
+
+- The first `save` created a new `in-progress` task without touching `src/login.ts`, `README.md`, or `.gitignore`; `check` reported `matched` over 3 content-hashed files and git dirs `.` and `src/`.
+- A fresh headless `load` did not modify the task file or sidecar; byte-level SHA-256 checks before/after passed.
+- After changing `src/login.ts`, `load` reported `changed` (not `unknown`) and named the modified path.
+- The second `save` reused the active task, regenerated the sidecar with a new `snapshot_id`, and `check` matched the new baseline.
+- On a manually completed task, the skill stopped at `status-guard` exit 1 and did not write; it offered explicit reopen or a new task.
+- The legacy record was migrated from a frontmatter-less Markdown file. The skill then re-ran `status-guard`, received exit 2 for `status: unknown`, and correctly stopped instead of fabricating `in-progress`.
+- Archive/restore preserved `fingerprint_sha256` and `updated_at`; the sidecar moved with the task and `fingerprint_file` was rewritten to the new location.
+- `analysis` was probed with a synthetic transcript containing system and tool markers; the JSON output contained neither marker and no `head` field.
+
+### Limitations
+
+- One Claude Code version, one model/gateway, one temporary git project. Results are behavioral evidence for this environment, not a cross-model guarantee.
+- The E2E used a renamed project-local copy; the exact `/handover` name was not exercised while a global v1.1.1 copy was installed. For a release install, replace or remove the global copy and repeat the minimal chain.
+- `analysis` leak testing used a synthetic transcript; live transcripts were not inspected for content.
+- Not covered: real business project, actual 1.0.0 artifact, concurrency, interactive permission modes, archive/restore failure injection, and the full `CHECKLIST.md`.
+- The migrated legacy task remains `status: unknown` by design; completing it requires a user-confirmed status before the next save.
+
+---
+
+# Historical: v1.1.0-rc.1 Claude Code E2E Test Results
 
 - Date: 2026-11-02
 - Version: v1.1.0-rc.1
@@ -6,7 +60,7 @@
 - Model gateway: custom gateway (name withheld); the harness printed `unrecognized_model` at startup and execution continued.
 - Invocation: `claude -p "<slash command>" --permission-mode dontAsk --allowedTools "Read Write Edit Glob Grep Bash" --max-turns 30 --no-session-persistence`
 - Scope: minimal real save/load/change chain in temporary git projects. Fixture-level script tests are in `FIXTURE_TEST_RESULTS.md`; static checks are in `VALIDATION.md`.
-- Historical note: this report covers `v1.1.0-rc.1`. Current v1.1.2 fixture results are in `FIXTURE_TEST_RESULTS.md` (82 cases); v1.1.1 headless save/load, status-selection, and `status-guard` results remain summarized in `REVIEW.md` and `RELEASE_NOTES.md`, but were not rerun for v1.1.2. This file is not v1.1.1 or v1.1.2 evidence.
+- Historical note: this section covers `v1.1.0-rc.1`. Current v1.1.2 results are above; current fixture results are in `FIXTURE_TEST_RESULTS.md` (82 cases).
 
 ## Coverage summary
 

@@ -40,7 +40,7 @@
 5. `handover/scripts/handover.py` — `list`, `fingerprint`, `check`, `status-guard`, `ignore-check`, `stats`, `analysis`.
 6. `handover/VALIDATION.md` — structural/static checks.
 7. `handover/FIXTURE_TEST_RESULTS.md` — 82 script-level cases.
-8. `handover/E2E_TEST_RESULTS.md` — historical v1.1.0-rc.1 Claude Code E2E record.
+8. `handover/E2E_TEST_RESULTS.md` — v1.1.2 headless E2E plus the historical v1.1.0-rc.1 record.
 9. `handover/CHECKLIST.md` — 122 acceptance scenarios, not fully executed.
 
 ## Test status
@@ -49,13 +49,14 @@
 |---|---|
 | Structural/static (`VALIDATION.md`) | PASS; no errors |
 | Script fixture (`FIXTURE_TEST_RESULTS.md`) | 82/82 PASS |
-| v1.1.1 headless save/load smoke | PASS: save/load/list exit 0; load read-only ~3k tokens; `changed` only for untracked harness files created after save; not rerun for v1.1.2 |
-| v1.1.1 status-selection smoke | PASS: continuing a completed task created new `in-progress` `project-init-wrapup`; existing completed tasks unchanged; not rerun for v1.1.2 |
+| v1.1.2 headless E2E (`E2E_TEST_RESULTS.md`) | PASS: save → fresh load (read-only) → modify → load (`changed`) → save (`matched`); completed guard; legacy migration branch; archive/restore; list; brief; `--out` and `analysis` probes |
+| v1.1.1 headless save/load smoke | PASS: save/load/list exit 0; load read-only ~3k tokens; `changed` only for untracked harness files created after save; kept as historical evidence |
+| v1.1.1 status-selection smoke | PASS: continuing a completed task created new `in-progress` `project-init-wrapup`; existing completed tasks unchanged; kept as historical evidence |
 | Real Claude Code E2E (rc.1 minimal chain) | PASS after a scope fix; not rerun for v1.1.1 |
 | Controlled fixture acceptance (rc.1) | PASS for no-ID load, multi-turn, A/B isolation, archive/restore, 1.0-style migration; not rerun for v1.1.1 |
 | Real business project, real 1.0.0 artifact, concurrency/real permission modes, full 122-item checklist | Not executed |
 
-The v1.1.1 headless save/load smoke passed; the full change → load → save chain was not rerun. v1.1.2 has fixture and static evidence only; neither the v1.1.1 headless smokes nor the rc.1 E2E were rerun after the v1.1.2 changes. `E2E_TEST_RESULTS.md` remains a v1.1.0-rc.1 record, not v1.1.1 or v1.1.2 evidence.
+The v1.1.2 headless E2E reran the save → load → change → load → save chain and the bounded cases above in one temporary git project. It used a project-local copy renamed to `handover-v112` so the globally installed v1.1.1 `handover` could not shadow it; the exact `/handover` name was not exercised while the global copy was installed. `E2E_TEST_RESULTS.md` now contains the v1.1.2 record plus the historical rc.1 record. Real business projects, actual 1.0.0 artifacts, concurrency, interactive permission modes, archive/restore failure injection, and the full 122-item checklist remain untested.
 
 ### Status-selection manual E2E (global v1.1.0)
 

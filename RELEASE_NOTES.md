@@ -23,12 +23,14 @@
 - Static validator: PASS.
 - Fixture suite: 82/82 PASS (27 new cases covering the v1.1.2 fixes and the two documented scope boundaries).
 - `SHA256SUMS.txt`: 15/15 OK.
-- No new headless save/load smoke or real Claude Code E2E was run for v1.1.2. The v1.1.1 smokes and rc.1 E2E records were not rerun after these changes.
+- Headless v1.1.2 E2E: PASS in one temporary git project (project-local copy renamed to `handover-v112` to avoid a global v1.1.1 shadow). Covered: new save → fresh load (read-only) → modify → load (`changed`) → save (new baseline, `matched`); completed-task guard; legacy migration branch; archive/restore record-group move with baseline preserved; `list --all`; `brief`; `--out` refusal; `analysis` content probe. Details in `handover/E2E_TEST_RESULTS.md`.
+- Not covered: real business project, actual 1.0.0 artifact, concurrency, interactive permission modes, archive/restore failure injection, and the full 122-item checklist.
 
 ## Scope and limitations
 
 - `check` still covers only declared content hashes plus git status for declared directories. A same-directory file not listed in `files`, whose content changes without changing its git status, can remain `matched`.
 - `check` does not hash the task body; editing only the body while keeping frontmatter and the sidecar unchanged can remain `matched`.
+- The v1.1.2 E2E is one Claude Code version/model/gateway and one temporary project; it is not a cross-model or cross-permission-mode guarantee. The exact `/handover` name was not exercised while the global v1.1.1 copy was installed.
 - Real business-project trial, real 1.0.0 artifact migration, concurrency, archive/restore failure paths, and normal interactive permission modes remain unvalidated.
 - No full code audit or security guarantee. Checksums verify content consistency; static checks verify only their listed rules; fixtures and E2E evidence have separate bounded scopes.
 
@@ -38,7 +40,7 @@
 |---|---|
 | `handover/SKILL.md` | `46f80c24288d54977bd1dd2a4ad5b4c98a1b909d7fc73299aa59c133e252c96e` |
 | `handover/scripts/handover.py` | `dff71bddeb79ca28cb3696092de94996808fd935ca94b3e4b7b4f62b0b0e663d` |
-| `handover/README.md` | `cbd95296935031a2e6a8c309fc1cbcd5b83db1e585aa65e85f02b261f5319279` |
+| `handover/README.md` | `df8e9f6c6bf7f98838fda275ed20e891f92cb4d1de40726c4c04d72a6fc74d09` |
 | `handover/CHECKLIST.md` | `e295f4f8fa561fb4e473bbb80bc81af64d08f15bc8f7690f3dbeb1e4033021f5` |
 
 The full package manifest is `handover/SHA256SUMS.txt`.

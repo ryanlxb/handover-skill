@@ -281,14 +281,14 @@ stale_after_days: 14
 
 ## 待验证项（v1.1.2）
 
-- 模板路径：`SKILL.md` 不再内联模板内容；`references/save.md` 通过相对路径 `task-template.md` 引用，`SKILL.md` 通过 Markdown 链接路由到 `references/`。2026-11-02 的最小 E2E 验证的是旧版内联路径；v1.1.0 的 headless brief E2E 验证了新的 `references/` 读取，但完整 save/load/change E2E 仍是 rc.1 记录；模板读取仍未重新 E2E。若失败，按 harness 给出的 Skill base directory 解析。
+- 模板路径：`SKILL.md` 不再内联模板内容；`references/save.md` 通过相对路径 `task-template.md` 引用，`SKILL.md` 通过 Markdown 链接路由到 `references/`。v1.1.2 headless E2E 已用 reference-routed save/load/change 链路验证；模板读取仍建议在安装方式变化后单独检查。若失败，按 harness 给出的 Skill base directory 解析。
 - 文档长度：初始 draft 不设硬性限制；后续观察到 `brief`/`load` 上下文成本过高，现已改为按需读取 + 软性预算（任务文档建议 ≤ 200 行 / ≤ 4k tokens；`SKILL.md` ≤ 12KB）。该预算不改变任务语义，只限制默认读取范围。
 - 固定 token 阈值：本版本不采用；60% 仅作个人提醒。
 - archive/restore 仍是指令型操作，尚未脚本化；记录组规则已写明，但文件移动与入口更新的真实失败行为需在端到端验收中确认。
 
 ## 测试声明
 
-当前完成设计评审、结构/静态检查、脚本 fixture 测试（v1.1.2：82/82）、v1.1.0 headless brief E2E（临时项目，读取约 0.7k tokens，未读完整任务正文）、v1.1.1 headless save/load 冒烟（唯一项目级 name；save/load/list exit 0；load 约 3k tokens、只读；changed 仅由 save 后新增的未跟踪 harness 文件触发）、`status-guard` 状态选择保护（completed/cancelled 阻止 save；显式重开需授权）、v1.1.1 status-selection 冒烟（“继续 old-task-2”新建 in-progress `project-init-wrapup`，旧 completed 不变），以及 rc.1 时期的受控夹具验收（无 ID load 矩阵、多轮交接、A/B 隔离、archive/restore、1.0 风格迁移）；结果见 `VALIDATION.md`、`FIXTURE_TEST_RESULTS.md`、`E2E_TEST_RESULTS.md`。v1.1.2 的修补目前只有 fixture 与静态检查证据；v1.1.1 的 headless 冒烟和 rc.1 的 E2E 没有针对 v1.1.2 重跑，完整 change → load → save 链路仍未重跑。受控夹具验收不是真实业务项目试用；真实业务项目、真实 1.0.0 制品、并发/真实权限模式与完整 122 项 checklist 尚未执行，不能把已有结果当作完整端到端通过。
+当前完成设计评审、结构/静态检查、脚本 fixture 测试（v1.1.2：82/82）、v1.1.0 headless brief E2E（临时项目，读取约 0.7k tokens，未读完整任务正文）、v1.1.1 headless save/load 与 status-selection 冒烟、v1.1.2 headless E2E（临时 git 项目；项目级副本改名为 `handover-v112`，避免全局 v1.1.1 遮蔽；save → 新会话 load（只读、哈希不变）→ 修改 → load（changed）→ save（新基线 matched）；completed 保护、legacy 迁移分支、archive/restore、list、brief、`--out` 与 `analysis` 探针均通过），以及 rc.1 时期的受控夹具验收（无 ID load 矩阵、多轮交接、A/B 隔离、archive/restore、1.0 风格迁移）；结果见 `VALIDATION.md`、`FIXTURE_TEST_RESULTS.md`、`E2E_TEST_RESULTS.md`。v1.1.2 E2E 只覆盖一个环境与一次临时项目；全局 v1.1.1 存在时未直接验证 exact `/handover` 名称；真实业务项目、真实 1.0.0 制品、并发/真实权限模式、archive/restore 失败注入与完整 122 项 checklist 尚未执行，不能把已有结果当作完整端到端通过。
 
 - `SHA256SUMS.txt` 只证明列入清单的文件与对应摘要一致，不证明逻辑正确、安装成功、权限安全或真实行为。
 - 截断标记检查是启发式，不等于自然语言绝无残句；聊天输出可能被截断，以磁盘文件和真实调用结果为准。
