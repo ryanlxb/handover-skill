@@ -120,3 +120,6 @@
 90. save 不把旧结论当当前事实；已存在 task-id 但目标不同时停止覆盖；completed/cancelled 不隐式重开。
 91. brief 读取任务列表标题/status、近期 commit/工作树；不读任务正文。
 92. brief 质量检查表包含“当前项目状态（摘要级）”；需要任务细节时使用 `load`。
+93. `load --deep` 仅在显式指定时启用；默认 `load` 不 deep。
+94. `load --deep` 读完整任务正文 + 完整“接手必读”；不读无关项目/其他任务；默认上限 30k tokens，报告未读/截断。
+95. `load --deep` 仍只读、仍先 `check`；`changed`/`unknown`/`stale` 需对账；不激活、不 commit、不 `/clear`。

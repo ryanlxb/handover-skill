@@ -31,6 +31,7 @@
 /handover save login
 /handover list
 /handover load login
+/handover load login --deep
 /handover brief
 /handover archive login
 /handover restore login-20261102t103000z
@@ -40,7 +41,7 @@
 
 - save：保存当前会话中该任务的目标、状态和证据，不保存完整窗口。成功后输出精确的 `/handover load <task-id>`。
 - list：默认只列活跃状态；`--all` 含已结束与归档，并显示被隐藏数量；另有“待识别记录”区域。标题取 frontmatter 的 `title`，缺失时回退显示 task-id（不读正文）。
-- load：只恢复并核验，不自动继续开发；不改变 status 或 `updated_at`。
+- load：只恢复并核验，不自动继续开发；不改变 status 或 `updated_at`。`--deep` 是显式全量模式：读完整任务正文 + 完整“接手必读”，默认上限 30k tokens，仍先 `check` 并报告未读/截断。
 - brief：了解当前项目背景 + 摘要级项目状态（任务列表标题/status、近期 commit/工作树），不执行旧任务，不读任务正文。
 - archive：默认只归档 completed/cancelled；不删除，更新入口链接。
 - restore：恢复归档到当前记录区，状态为 paused；需重新 `load` 核验后再继续。
@@ -54,6 +55,7 @@
 - `brief`/`load` 默认先读索引和摘要，再按需读正文；不重复读已在上下文中的文件。
 - `brief` 默认读取：项目入口（任务列表标题/status）+ README/背景文档开头 +（如指定任务或入口只有一个任务）快速接手摘要 + git 状态 + 近期 commit；证据读取默认 ≤ 4k tokens。
 - `load` 默认读取：项目入口 + task frontmatter + 快速接手摘要 + 当前进度 + 下一步 + 并行与依赖 + `check` 摘要 + “接手必读”索引；证据读取默认 ≤ 6k tokens（不含 SKILL.md、模式 reference 和 `check` 输出）。
+- `load --deep`：显式全量读取完整任务正文 + 完整“接手必读”，默认上限 30k tokens；仍先 `check`，报告未读/截断；不读无关项目。
 - “接手必读”是索引：`path#symbol` / `path:start-end`；不整文件读取；默认 ≤ 1.5k tokens。
 - 大文件用 Grep 或 Read offset；`git diff` 先 `--stat`，再按相关路径读取。
 - 需要完整细节时，先读用户点名的章节；报告“已读/未读/截断”。

@@ -1,7 +1,7 @@
 ---
 name: handover
 description: 保存当前项目的任务交接状态、核验并恢复任务，或为新任务加载项目背景。仅在用户主动调用时运行。
-argument-hint: "[save|load|brief|list|archive|restore|analysis] [task-id|archive-id] [--all] [--archived]"
+argument-hint: "[save|load|brief|list|archive|restore|analysis] [task-id|archive-id] [--all] [--archived] [--deep]"
 disable-model-invocation: true
 ---
 
@@ -45,6 +45,7 @@ disable-model-invocation: true
 - 需要完整细节时，先读用户点名的章节；仍然不整文件读取。
 - save/archive/restore 只读必要文件；不批量读取其他任务正文。
 - save 前先对旧记录跑 `check`；changed/unknown/stale 时只读摘要/相关章节，不把旧结论当当前事实。
+- `load --deep` 为显式全量：读完整任务正文 + 完整“接手必读”，上限 30k tokens，报告截断；仍先跑 `check`，不读无关项目。
 - save 后可选用 `stats` 查看任务文档的 token 分布；优先压缩高占比章节，不按空格盲目压缩。
 
 ## 模式路由
@@ -52,7 +53,7 @@ disable-model-invocation: true
 | 模式 | 动作 | 执行前读取 |
 |---|---|---|
 | save（默认） | 保存当前任务状态 | [references/save.md](references/save.md) + [references/fingerprint.md](references/fingerprint.md) |
-| load | 只读核验并简报 | [references/brief-load.md](references/brief-load.md) |
+| load / load --deep | 只读核验并简报；`--deep` 为显式全量读取 | [references/brief-load.md](references/brief-load.md) |
 | brief | 加载项目背景 + 摘要级项目状态，不读任务正文 | [references/brief-load.md](references/brief-load.md) |
 | list | 列出任务 | 本节；字段解释见 [references/data-model.md](references/data-model.md) |
 | archive | 归档任务 | [references/archive-restore.md](references/archive-restore.md) + [references/data-model.md](references/data-model.md) |
