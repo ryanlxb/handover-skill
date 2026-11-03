@@ -26,7 +26,7 @@
 | `archive` | Move task + sidecar as one group; preserve baseline; update entry | Both files moved; `fingerprint_sha256` and `updated_at` unchanged; entry updated; `check` matched | PASS |
 | `restore` | Return group; status `paused`; preserve baseline and timestamps | Group restored; `status: paused`; `archived_at` preserved; `restored_at` set; `fingerprint_sha256` unchanged; `check` matched | PASS |
 | `list --all` | Active + exceptions; ignore non-task backups | `demo` shown paused; `legacy` shown as unknown exception; `.handover/demo.md.bak` not treated as a task | PASS |
-| `brief` | Project background + summary state; no full task body | Read entry/frontmatter and opening sections only; ~1.4k tokens; reported skipped content | PASS |
+| `brief` (after read-budget clarification) | Project background + summary state; no full task body | Read `demo` frontmatter + summary (L1-30) and `legacy` frontmatter (L1-15); ~1.2k tokens; skipped demo body L31+ | PASS |
 | `fingerprint --out` business file | Exit 2; file unchanged | Exit 2 with path restriction; business file unchanged | PASS |
 | `fingerprint --out` task Markdown | Exit 2; task unchanged | Exit 2 with filename restriction; task unchanged | PASS |
 | `analysis --json` content probe | No system/tool text; no `head` field | Synthetic transcript markers absent; no `head` field | PASS |
@@ -40,6 +40,7 @@
 - On a manually completed task, the skill stopped at `status-guard` exit 1 and did not write; it offered explicit reopen or a new task.
 - The legacy record was migrated from a frontmatter-less Markdown file. The skill then re-ran `status-guard`, received exit 2 for `status: unknown`, and correctly stopped instead of fabricating `in-progress`.
 - Archive/restore preserved `fingerprint_sha256` and `updated_at`; the sidecar moved with the task and `fingerprint_file` was rewritten to the new location.
+- The first `brief` run read 60 lines of the task file, above the ≤40-line summary budget in `brief-load.md`. The reference was tightened to stop at the next `##` heading and to read only frontmatter for unrecognised records; a re-run read `demo.md:1-30` and `legacy.md:1-15` (~1.2k tokens) and skipped the task body.
 - `analysis` was probed with a synthetic transcript containing system and tool markers; the JSON output contained neither marker and no `head` field.
 
 ### Limitations

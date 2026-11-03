@@ -34,9 +34,10 @@
 1. 项目识别（SKILL.md “项目识别与隔离”）。
 2. `handover.md` 全文；从任务列表读取标题/status/updated_at，不读任务正文。
 3. 项目背景：项目 README 的简介/安装/使用开头（≤60 行），或 `docs/product/context.md`、PRD、架构文档的相关章节（≤60 行）。
-4. 若用户指定任务，或入口只有一个任务：任务 frontmatter + “快速接手摘要”（≤40 行）；不读完整正文。
-5. git：`git status --short`、branch、HEAD、`git log --oneline -10`（近期变更）。
-6. CLAUDE.md 已在上下文中；不重复读。
+4. 若用户指定任务，或入口只有一个任务：任务 frontmatter + “快速接手摘要”（≤40 行，读到下一个 `##` 标题为止）；不读摘要之后的正文。
+5. 待识别记录只读 frontmatter/标题；frontmatter 不可读时只记录原因，不读正文。
+6. git：`git status --short`、branch、HEAD、`git log --oneline -10`（近期变更）。
+7. CLAUDE.md 已在上下文中；不重复读。
 
 ### 质量检查表（输出必须覆盖）
 
