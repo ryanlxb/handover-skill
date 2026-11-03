@@ -1,9 +1,9 @@
 # v1.1.0-rc.1 Fixture Test Results
 
-- Date (UTC): 2026-11-02T09:13:49+00:00
+- Date (UTC): 2026-11-03T02:32:06+00:00
 - Script: `handover/scripts/handover.py`
 - Scope: fixture-level script tests only; no Claude Code skill execution.
-- Cases: 19, passed: 19, failed: 0
+- Cases: 29, passed: 29, failed: 0
 
 | # | case | expected | actual | result |
 |---:|---|---|---|---|
@@ -26,6 +26,16 @@
 | 17 | ignore-check: 未忽略 | warning, exit 1 | exit 1 | PASS |
 | 18 | ignore-check: 已跟踪的任务数据 | warning, exit 1 | exit 1 | PASS |
 | 19 | ignore-check: 非 Git 项目 | not-git, exit 0 | exit 0 | PASS |
+| 20 | stats 文本输出：frontmatter + section 分布 | exit 0, contains sections | exit 0 | PASS |
+| 21 | stats --json：合法 JSON，percent 合计约 100 | exit 0, JSON valid | exit 0 | PASS |
+| 22 | stats：任务文件缺失 | exit 2, error | exit 2 | PASS |
+| 23 | stats：task-file 在项目外 | exit 2, error | exit 2 | PASS |
+| 24 | stats：非法 task-id | exit 2, error | exit 2 | PASS |
+| 25 | stats：无 frontmatter 的文档 | exit 0, frontmatter=0, decorative=1 | exit 0 | PASS |
+| 26 | analysis 文本输出：tool schema + shape delta | exit 0, contains groups | exit 0 | PASS |
+| 27 | analysis --json：分组和 shape delta | exit 0, JSON valid | exit 0 | PASS |
+| 28 | analysis：显式 transcript 缺失 | exit 2, error | exit 2 | PASS |
+| 29 | analysis：无 transcript 时仍给出配置报告 | exit 0, not found note | exit 0 | PASS |
 
 ## Not covered by these fixture tests
 
