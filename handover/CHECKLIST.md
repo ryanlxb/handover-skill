@@ -1,4 +1,4 @@
-# v1.1.0 验收清单
+# v1.1.1 验收清单
 
 以下为建议测试，不代表已在你的 Claude Code 中执行。结构/静态检查结果见 `VALIDATION.md`；端到端验收需另行执行。
 
@@ -123,3 +123,21 @@
 93. `load --deep` 仅在显式指定时启用；默认 `load` 不 deep。
 94. `load --deep` 读完整任务正文 + 完整“接手必读”；不读无关项目/其他任务；默认上限 30k tokens，报告未读/截断。
 95. `load --deep` 仍只读、仍先 `check`；`changed`/`unknown`/`stale` 需对账；不激活、不 commit、不 `/clear`。
+
+## v1.1.1 回归
+
+96. `.handover/config.yaml` 不带 `---` 分隔符时，`stale_after_days` 仍生效；无效值告警并使用默认 14。
+97. 任务 frontmatter 缺少 `fingerprint_file`、`fingerprint_sha256`、`schema`、`task_id` 或 `project_root`，或与 sidecar/当前项目不一致时，`check` 必须返回 unknown，不得 matched。
+98. fingerprint 声明范围为空时拒绝生成基线；不得出现 0 文件 matched。
+99. 根目录声明的文件只覆盖根目录直属文件；根目录新增文件触发 changed，子目录无关新增不触发。
+100. sidecar 输出路径是符号链接时拒绝写入，业务文件内容保持不变。
+101. `.handover` 或单个任务文件指向项目外时，list 不读取外部内容；目录级指向项目外时停止并报告。
+102. matched 输出包含范围外变化计数 `out_of_scope_changes`，并注明只覆盖声明范围。
+103. 声明文件超过大小上限但大小已变化时，check 判 changed；大小不可判定时 unknown。
+104. 重复 task_id 在 list 的异常区域可见，不被静默隐藏。
+105. `--scope-dir .` 按根目录直属文件处理，不递归整个仓库。
+106. archive/restore 先复制任务与 sidecar 到目标并回读，确认后再删除源；删除源失败时保留源并报告，不宣称移动完成。
+107. 首次 save 前 `.handover/` 尚不存在时，`ignore-check` 仍识别 `.gitignore` 中的 `.handover/` 目录规则，不误报 `not-ignored`。
+108. 无 ID `save` 只复用 active 任务（in-progress/pending/blocked/paused）；completed/cancelled/archived 不是目标，默认新建 `in-progress` 任务。
+109. 目标为 completed/cancelled 时 `status-guard` exit 1，`save` 停止并询问新建 task-id 或明确重开；只有用户明确授权重开才使用 `--reopen-authorised` 并记录原因。
+110. 新任务默认 `in-progress`；`completed` 仅在用户明确确认完成且验收证据存在时写入；声明与证据冲突时用 `blocked`，不因 save/clear/context 阈值推断完成。

@@ -15,6 +15,18 @@
 - 如果 task-id 已存在但目标不同，停止覆盖并提示换 ID。
 - 如果旧记录是 completed/cancelled，不隐式重开；用 load 显式查看或新建任务。
 
+### 任务选择与状态（无 ID 时必须遵守）
+
+- 无 ID 时只允许沿用 **active** 任务：in-progress / pending / blocked / paused，且必须与当前会话目标明确匹配。
+- completed / cancelled / archived 任务**不是 save 目标**。即使当前会话提到它，也默认新建 task-id；只有用户明确说“重开 `<task-id>`”时，才允许把旧任务作为目标并记录重开原因。“继续”“同一个任务”“收尾”不等于重开授权。
+- 新建任务默认 `status: in-progress`。`completed` 只在用户明确确认完成且验收证据存在时写入；声明与证据冲突时用 `blocked`，不要用 `completed` 掩盖未验证状态。
+- 确定 task-id 后，如果目标文件已存在，先运行 `status-guard`：
+  - exit 0：absent 或 active，可继续；
+  - exit 1：completed/cancelled，停止写入，报告“新建 task-id 还是明确重开”；
+  - exit 2：unknown/错误，停止写入并报告。
+- 只有用户明确授权重开时，才使用 `status-guard --reopen-authorised`，并在任务文档“决策与尝试”记录该授权；不要自行推断。
+- save 简报必须报告：task_id、status、新建/复用/重开、选择原因。
+
 ## 2. 采集现场
 
 - 采集时间及时区、项目/仓库标识、工作区路径、分支、完整 HEAD；检查暂存、未暂存、未跟踪文件。
@@ -55,6 +67,7 @@
 - 写入前重新核对目标文件自读取后是否变化；有变化则停止覆盖并报告。
 - 使用同目录临时文件及安全替换（环境支持时），清理自己创建的临时文件；这不构成并发锁。
 - 新文件也需避免覆盖刚被其他会话创建的文件。无法安全写入时报告失败，不强行覆盖。
+- sidecar 输出路径是符号链接、或默认 `.handover` 是符号链接时，`fingerprint` 会拒绝写入；不要绕过该检查去覆盖业务文件。
 
 ## 6. 指纹
 
@@ -66,6 +79,7 @@
   - 清理临时文件；
   - 运行 `check --task-file <task.md> --expected-sha256 <hash>`，确认任务文件与 sidecar 的 `snapshot_id`/SHA 绑定一致，且检查时现场与刚生成的基线一致。
 - 若 `check` 返回 changed：报告“检查时现场与基线不一致”，不要宣称干净保存；若 unknown：报告不完整基线。该检查不证明正文语义与代码一致，也不证明正文整理期间代码始终未变。
+- 若排除 `.handover/`、`handover.md`、`.claude/`、`.git/` 后没有任何可声明文件，`fingerprint` 会拒绝生成空基线；不要写“0 文件 matched”。这些绑定字段置 null，并明确 consistency 将为 unknown。
 - 无法生成时这些字段置 null，并明确 consistency 将为 unknown。
 - 详细规则见 [fingerprint.md](fingerprint.md)。
 
@@ -80,7 +94,7 @@
 
 ## 8. 最终简报
 
-- 项目、任务、保存路径、核验结果、缺口、精确的新会话恢复命令（如 `/handover load login`）。
+- 项目、task_id、`status=...`、新建/复用/重开及原因、保存路径、核验结果、缺口、精确的新会话恢复命令（如 `/handover load login`）。
 - 不输出全局 last-active 指针。
 - 提醒交接不替代代码保存、提交或备份。
 - 不自动 `/clear`。

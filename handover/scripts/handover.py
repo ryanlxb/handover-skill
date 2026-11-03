@@ -22,6 +22,13 @@ check --root ROOT --task TASK [--task-file FILE] [--sidecar SIDECAR]
       no definite change + incomplete -> unknown
       complete + no change -> matched
 
+status-guard --root ROOT --task TASK [--task-file FILE] [--reopen-authorised]
+    Check whether a task may be reused as the target of `save`. Exit 0 =
+    absent or active (new/reuse allowed); 1 = completed/cancelled (stop and
+    ask the user to create a new task or explicitly authorise reopen);
+    2 = unknown/error. `--reopen-authorised` is only for an explicit user
+    request to reopen the completed/cancelled task.
+
 ignore-check --root ROOT
     Check whether .handover/ and handover.md are both ignored by Git and not
     tracked. Exit 0 = ok or not a git work tree; 1 = warning; 2 = unknown.
@@ -101,20 +108,9 @@ def freshness(updated_at: Optional[str], stale_days: int) -> str:
     return "stale" if age >= stale_days else "fresh"
 
 
-def parse_simple_yaml(text: str) -> Optional[Dict[str, Any]]:
-    """Parse a flat YAML frontmatter block. Returns None if absent/unclosed."""
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
-        return None
-    end = None
-    for i in range(1, len(lines)):
-        if lines[i].strip() == "---":
-            end = i
-            break
-    if end is None:
-        return None
+def parse_flat_yaml(lines: List[str]) -> Dict[str, Any]:
     data: Dict[str, Any] = {}
-    for raw in lines[1:end]:
+    for raw in lines:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -136,6 +132,33 @@ def parse_simple_yaml(text: str) -> Optional[Dict[str, Any]]:
     return data
 
 
+def parse_simple_yaml(text: str) -> Optional[Dict[str, Any]]:
+    """Parse a flat YAML frontmatter block. Returns None if absent/unclosed."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    end = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end = i
+            break
+    if end is None:
+        return None
+    return parse_flat_yaml(lines[1:end])
+
+
+def parse_config_yaml(text: str) -> Optional[Dict[str, Any]]:
+    """Parse a flat key/value config, with optional frontmatter delimiters."""
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":
+        parsed = parse_simple_yaml(text)
+        if parsed is not None:
+            return parsed
+        # A leading YAML document marker does not require a closing marker.
+        lines = lines[1:]
+    return parse_flat_yaml(lines)
+
+
 def read_frontmatter(path: Path) -> Tuple[Optional[Dict[str, Any]], str]:
     try:
         text = path.read_text(encoding="utf-8")
@@ -155,11 +178,13 @@ def read_stale_days(root: Path) -> Tuple[int, Optional[str]]:
         text = config.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         return DEFAULT_STALE_DAYS, "config_unreadable: %s" % exc
-    data = parse_simple_yaml(text)
+    data = parse_config_yaml(text)
+    if data is None:
+        return DEFAULT_STALE_DAYS, "unclosed config frontmatter; using default %d" % DEFAULT_STALE_DAYS
     if not data or "stale_after_days" not in data:
         return DEFAULT_STALE_DAYS, None
     value = data.get("stale_after_days")
-    if isinstance(value, int) and value > 0:
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
         return value, None
     return DEFAULT_STALE_DAYS, "invalid stale_after_days; using default %d" % DEFAULT_STALE_DAYS
 
@@ -278,6 +303,10 @@ def path_relevant(path: str, scope_paths: List[str], scope_dirs: List[str]) -> b
     if p in scope_paths:
         return True
     for directory in scope_dirs:
+        if directory == ".":
+            if "/" not in p:
+                return True
+            continue
         d = directory.rstrip("/")
         if d and (p == d or p.startswith(d + "/")):
             return True
@@ -301,6 +330,9 @@ def derive_scope_dirs(rels: List[str]) -> List[str]:
         parent = str(Path(rel).parent).replace("\\", "/")
         if parent and parent != ".":
             dirs.add(parent.rstrip("/") + "/")
+        else:
+            # Root-level files scope only their direct siblings, not the whole tree.
+            dirs.add(".")
     return sorted(dirs)
 
 
@@ -309,7 +341,9 @@ def normalize_scope_dir(value: str) -> Optional[str]:
     if not value or os.path.isabs(value):
         return None
     norm = os.path.normpath(value).replace("\\", "/")
-    if norm == "." or norm.startswith("../") or norm == "..":
+    if norm == ".":
+        return "."
+    if norm.startswith("../") or norm == "..":
         return None
     return norm.rstrip("/") + "/"
 
@@ -429,7 +463,7 @@ def cmd_ignore_check(args: argparse.Namespace) -> int:
         print("result: not-git")
         return 0
 
-    targets = [(".handover/", ".handover"), ("handover.md", "handover.md")]
+    targets = [(".handover/", ".handover/"), ("handover.md", "handover.md")]
     results: List[Tuple[str, str, str]] = []
     unknown = False
     warning = False
@@ -488,11 +522,21 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
             print("error: absolute path not allowed: %s" % rel, file=sys.stderr)
             return 2
         norm = normalize_rel(rel)
+        if norm == ".." or norm.startswith("../"):
+            print("error: path outside project root: %s" % rel, file=sys.stderr)
+            return 2
         if is_excluded(norm):
             skipped.append(norm)
             continue
         if norm not in rels:
             rels.append(norm)
+
+    if not rels:
+        print(
+            "error: no files to fingerprint after exclusions; refusing an empty baseline",
+            file=sys.stderr,
+        )
+        return 2
 
     files: Dict[str, Any] = {}
     issues = 0
@@ -525,8 +569,14 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
         "overall": "complete" if issues == 0 else "partial",
         "skipped_excluded": skipped,
     }
-    out = Path(args.out) if args.out else (root / ".handover" / (task + ".fingerprint.json"))
-    out = out.resolve()
+    out_path = Path(args.out) if args.out else (root / ".handover" / (task + ".fingerprint.json"))
+    if out_path.is_symlink():
+        print("error: output path is a symlink; refusing to overwrite: %s" % out_path, file=sys.stderr)
+        return 2
+    if not args.out and (root / ".handover").is_symlink():
+        print("error: .handover is a symlink; refusing to write: %s" % (root / ".handover"), file=sys.stderr)
+        return 2
+    out = out_path.resolve()
     if not within_root(root, out):
         print("error: output must be inside the project root", file=sys.stderr)
         return 2
@@ -555,6 +605,53 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
     if skipped:
         print("skipped_excluded: %s" % ", ".join(skipped))
     return 0
+
+
+def cmd_status_guard(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    if not TASK_RE.match(args.task):
+        print("status: unknown")
+        print("reason: invalid task-id")
+        return 2
+    task_file = Path(args.task_file) if args.task_file else (root / ".handover" / (args.task + ".md"))
+    task_file = task_file.resolve()
+    if not within_root(root, task_file):
+        print("status: unknown")
+        print("reason: task file outside project root")
+        return 2
+    if not task_file.is_file():
+        print("status: absent")
+        print("result: new-task-allowed")
+        return 0
+    data, status = read_frontmatter(task_file)
+    if data is None:
+        print("status: unknown")
+        print("reason: frontmatter unreadable: %s" % status)
+        return 2
+    if data.get("task_id") != args.task:
+        print("status: unknown")
+        print("reason: task_id mismatch")
+        return 2
+    task_status = str(data.get("status") or "unknown")
+    print("status: %s" % task_status)
+    if task_status in ACTIVE:
+        print("result: active-reuse-allowed")
+        return 0
+    if task_status in ENDED:
+        if args.reopen_authorised:
+            print("result: reopen-authorised")
+            print("note: only use after explicit user confirmation")
+            return 0
+        print("result: blocked-completed-task")
+        print("action: create-new-task-or-ask-user")
+        print(
+            "reason: target status is %s; do not write without explicit reopen confirmation"
+            % task_status
+        )
+        return 1
+    print("result: unknown")
+    print("reason: unsupported or missing status")
+    return 2
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -590,9 +687,18 @@ def cmd_check(args: argparse.Namespace) -> int:
         print("reason: sidecar task_id mismatch")
         return 2
     recorded_root = payload.get("root")
-    if recorded_root and Path(recorded_root).resolve() != root:
+    if not recorded_root:
+        print("consistency: unknown")
+        print("reason: sidecar root missing")
+        return 2
+    if Path(recorded_root).resolve() != root:
         print("consistency: unknown")
         print("reason: sidecar root mismatch")
+        return 2
+    files_payload = payload.get("files")
+    if not isinstance(files_payload, dict) or not files_payload:
+        print("consistency: unknown")
+        print("reason: sidecar has no files; empty baseline is not valid")
         return 2
 
     sidecar_sha = hashlib.sha256(sidecar.read_bytes()).hexdigest()
@@ -626,26 +732,55 @@ def cmd_check(args: argparse.Namespace) -> int:
         print("consistency: unknown")
         print("reason: task frontmatter unreadable: %s" % task_status)
         return 2
+    task_schema = task_data.get("schema")
+    if (
+        not isinstance(task_schema, int)
+        or isinstance(task_schema, bool)
+        or task_schema != SCHEMA
+    ):
+        print("consistency: unknown")
+        print("reason: task schema missing or unsupported")
+        return 2
+    if task_data.get("task_id") != args.task:
+        print("consistency: unknown")
+        print("reason: task task_id mismatch")
+        return 2
+    task_project_root = task_data.get("project_root")
+    if not task_project_root:
+        print("consistency: unknown")
+        print("reason: task project_root missing")
+        return 2
+    if Path(str(task_project_root)).resolve() != root:
+        print("consistency: unknown")
+        print("reason: task project_root mismatch")
+        return 2
     if task_data.get("snapshot_id") != snapshot_id:
         print("consistency: unknown")
         print("reason: task/sidecar snapshot_id mismatch")
         return 2
     recorded_fingerprint_file = task_data.get("fingerprint_file")
-    if recorded_fingerprint_file:
-        recorded_path = (root / str(recorded_fingerprint_file)).resolve()
-        if recorded_path != sidecar:
-            print("consistency: unknown")
-            print("reason: task fingerprint_file does not point to this sidecar")
-            return 2
+    if not recorded_fingerprint_file:
+        print("consistency: unknown")
+        print("reason: task fingerprint_file missing")
+        return 2
+    recorded_path = (root / str(recorded_fingerprint_file)).resolve()
+    if recorded_path != sidecar:
+        print("consistency: unknown")
+        print("reason: task fingerprint_file does not point to this sidecar")
+        return 2
     recorded_fingerprint_sha = task_data.get("fingerprint_sha256")
-    if recorded_fingerprint_sha and recorded_fingerprint_sha != sidecar_sha:
+    if not recorded_fingerprint_sha:
+        print("consistency: unknown")
+        print("reason: task fingerprint_sha256 missing")
+        return 2
+    if recorded_fingerprint_sha != sidecar_sha:
         print("consistency: unknown")
         print("reason: task fingerprint_sha256 mismatch")
         return 2
 
     content_changed: List[str] = []
     incomplete: List[str] = []
-    for rel, old in sorted(payload.get("files", {}).items()):
+    for rel, old in sorted(files_payload.items()):
         if old.get("status") != "ok":
             incomplete.append("%s: baseline status %s" % (rel, old.get("status")))
             continue
@@ -653,15 +788,30 @@ def cmd_check(args: argparse.Namespace) -> int:
         if record.get("status") == "missing":
             content_changed.append("%s: missing" % rel)
         elif record.get("status") != "ok":
-            incomplete.append("%s: current status %s" % (rel, record.get("status")))
+            old_size = old.get("size")
+            new_size = record.get("size")
+            if (
+                isinstance(old_size, int)
+                and isinstance(new_size, int)
+                and old_size != new_size
+            ):
+                content_changed.append("%s: size changed" % rel)
+            else:
+                incomplete.append("%s: current status %s" % (rel, record.get("status")))
         elif record.get("sha256") != old.get("sha256"):
             content_changed.append(rel)
 
     git_changed: List[str] = []
+    current_git: Optional[Dict[str, Any]] = None
     old_git = payload.get("git") or {}
     if old_git.get("available"):
         scope_paths = list(old_git.get("scope_paths") or [])
         scope_dirs = list(old_git.get("scope_dirs") or [])
+        # v1.1.0 sidecars may lack root-directory scope for root-level files.
+        # Add it conservatively so an existing baseline can still detect new
+        # root-level entries; a new save records "." explicitly.
+        if any("/" not in path for path in scope_paths) and "." not in scope_dirs:
+            scope_dirs.append(".")
         current_git = git_snapshot(root, scope_paths, scope_dirs)
         if not current_git.get("available"):
             incomplete.append("git unavailable now: %s" % current_git.get("reason"))
@@ -691,9 +841,15 @@ def cmd_check(args: argparse.Namespace) -> int:
         return 2
     print("consistency: matched")
     print("scope: %d file(s), %d git entries" % (
-        len(payload.get("files", {})),
+        len(files_payload),
         len(old_git.get("status_entries") or []),
     ))
+    if current_git is not None and int(current_git.get("ignored_entries") or 0) > 0:
+        print(
+            "out_of_scope_changes: %d (not part of matched)"
+            % int(current_git.get("ignored_entries") or 0)
+        )
+    print("note: matched covers the declared scope only")
     return 0
 
 
@@ -711,6 +867,13 @@ def iter_task_files(root: Path, include_archive: bool) -> List[Path]:
 
 def cmd_list(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    task_dir = root / ".handover"
+    if task_dir.is_symlink() and not within_root(root, task_dir):
+        print(
+            "error: .handover resolves outside project root: %s" % task_dir,
+            file=sys.stderr,
+        )
+        return 2
     include_archive = bool(args.all)
     stale_days, config_warning = read_stale_days(root)
     if config_warning:
@@ -726,6 +889,11 @@ def cmd_list(args: argparse.Namespace) -> int:
 
     for path in iter_task_files(root, include_archive=False):
         rel = str(path.relative_to(root))
+        if not within_root(root, path):
+            exception_rows.append(
+                (path.stem, path.stem, "unknown", "-", "path resolves outside project root", rel)
+            )
+            continue
         data, status = read_frontmatter(path)
         if data is None:
             exception_rows.append((path.stem, path.stem, "unknown", "-", "frontmatter: %s" % status, rel))
@@ -738,12 +906,13 @@ def cmd_list(args: argparse.Namespace) -> int:
         reasons: List[str] = []
         if not task_id:
             reasons.append("missing task_id")
-        elif path.stem != task_id:
-            reasons.append("filename/task_id mismatch")
-        elif task_id in seen:
-            reasons.append("duplicate task_id")
         else:
-            seen[task_id] = rel
+            if task_id in seen:
+                reasons.append("duplicate task_id")
+            else:
+                seen[task_id] = rel
+            if path.stem != task_id:
+                reasons.append("filename/task_id mismatch")
         schema = data.get("schema")
         if schema is None:
             reasons.append("missing schema")
@@ -767,11 +936,23 @@ def cmd_list(args: argparse.Namespace) -> int:
         for path in sorted(archive.glob("*.md")):
             if not path.is_file():
                 continue
+            rel = str(path.relative_to(root))
+            if not within_root(root, path):
+                exception_rows.append(
+                    (
+                        path.stem,
+                        path.stem,
+                        "unknown",
+                        "-",
+                        "archive path resolves outside project root",
+                        rel,
+                    )
+                )
+                continue
             archived_count += 1
             if not include_archive:
                 continue
             data, status = read_frontmatter(path)
-            rel = str(path.relative_to(root))
             if data is None:
                 archived_rows.append((path.stem, path.stem, "unknown", "-", "%s (frontmatter: %s)" % (rel, status)))
                 continue
@@ -1174,6 +1355,8 @@ def measure_config(root: Path) -> List[Dict[str, Any]]:
         try:
             if not path.is_file():
                 continue
+            if label in ("task doc", "handover entry") and not within_root(root, path):
+                continue
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
@@ -1429,6 +1612,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--expected-sha256")
     p_check.add_argument("--expected-snapshot-id")
     p_check.set_defaults(func=cmd_check)
+
+    p_guard = sub.add_parser("status-guard", help="check whether a task may be reused for save")
+    p_guard.add_argument("--root", required=True)
+    p_guard.add_argument("--task", required=True)
+    p_guard.add_argument("--task-file")
+    p_guard.add_argument("--reopen-authorised", action="store_true")
+    p_guard.set_defaults(func=cmd_status_guard)
 
     p_ignore = sub.add_parser("ignore-check", help="check task data is ignored and untracked")
     p_ignore.add_argument("--root", required=True)

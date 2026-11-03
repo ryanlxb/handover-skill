@@ -9,7 +9,7 @@ A Claude Code skill package for cross-session task handover, plus a stdlib-only 
 - `handover/` is the installable skill. Install it by copying the folder to `~/.claude/skills/handover/` or `<project>/.claude/skills/handover/`.
 - `handover/SKILL.md` is the model-facing protocol; `handover/README.md` is the human-facing usage and boundary document.
 - `handover/references/` holds the task template plus mode-specific details (`brief-load.md`, `save.md`, `archive-restore.md`, `data-model.md`, `fingerprint.md`). `SKILL.md` is the lightweight router; load only the mode reference you need.
-- `handover/scripts/handover.py` is an optional helper with `list`, `fingerprint`, `check`, `ignore-check`, `stats`, and `analysis`.
+- `handover/scripts/handover.py` is an optional helper with `list`, `fingerprint`, `check`, `status-guard`, `ignore-check`, `stats`, and `analysis`.
 - `tests/` validates the package and helper; it does not execute the skill.
 - `handover/VALIDATION.md`, `FIXTURE_TEST_RESULTS.md`, and `E2E_TEST_RESULTS.md` are committed validation reports.
 - `handover/SHA256SUMS.txt` covers the skill package files.
@@ -28,7 +28,7 @@ python3 -I tests/run_fixture_tests.py
 
 `validate_handover.py` checks required files, frontmatter keys, code-fence balance, local Markdown links, truncation markers, and Python syntax. It prints a Markdown report and exits non-zero on errors.
 
-`run_fixture_tests.py` runs 19 cases against `handover/scripts/handover.py` in temporary git and non-git projects. It prints a Markdown report and exits non-zero on failures. There is no single-case flag; run the full suite, or temporarily narrow the `tests` list in `tests/run_fixture_tests.py` when debugging one case.
+`run_fixture_tests.py` runs 55 cases against `handover/scripts/handover.py` in temporary git and non-git projects. It prints a Markdown report and exits non-zero on failures. There is no single-case flag; run the full suite, or temporarily narrow the `tests` list in `tests/run_fixture_tests.py` when debugging one case.
 
 ### Helper CLI
 
@@ -37,6 +37,7 @@ python3 -I handover/scripts/handover.py --help
 python3 -I handover/scripts/handover.py list --root <project> --all
 python3 -I handover/scripts/handover.py fingerprint --root <project> --task <id> --paths <paths-file>
 python3 -I handover/scripts/handover.py check --root <project> --task <id> --task-file <task.md>
+python3 -I handover/scripts/handover.py status-guard --root <project> --task <id> [--task-file <task.md>]
 python3 -I handover/scripts/handover.py ignore-check --root <project>
 python3 -I handover/scripts/handover.py stats --root <project> --task <id> [--json]
 python3 -I handover/scripts/handover.py analysis --root <project> [--session <id>] [--context-window <n>] [--json]
@@ -152,6 +153,10 @@ These layers are not interchangeable; static checks do not prove runtime behavio
 - Do not regenerate a fingerprint during `archive` or `restore`; preserve the original baseline and mark consistency `unknown` if it is missing.
 - Keep `load` read-only. Do not add automatic activation, commit, `/clear`, or service startup.
 - Keep the helper stdlib-only and Python 3.9+ compatible.
+- `fingerprint` refuses an empty declared scope and refuses symlinked sidecar output; do not remove those guards.
+- Root-level declared files scope only root-directory entries; subdirectories scope their subtrees. `--scope-dir .` means root-directory entries, not recursive whole-repo scope.
+- `check` requires task `schema`/`task_id`/`project_root`/`snapshot_id`/`fingerprint_file`/`fingerprint_sha256` to agree with the current project and sidecar; missing fields are `unknown`, never `matched`.
+- `save` with no ID only reuses active tasks; completed/cancelled/archived are not targets. New tasks default to `in-progress`; `completed` requires explicit user confirmation plus evidence. `status-guard` exits 1 for completed/cancelled targets; `--reopen-authorised` is only for an explicit user request to reopen.
 - `stale` is not a status; `unknown` is not a user-selectable status.
 - The fingerprint excludes `.claude/` and `.git/`; do not add them back to the declared scope.
 - The template's example date (`2026-11-02T10:30:00+08:00`) is a format example; never copy it into a real task.

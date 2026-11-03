@@ -18,7 +18,7 @@ Checks required files, frontmatter keys, code-fence balance, local Markdown link
 python3 -I tests/run_fixture_tests.py
 ```
 
-Runs 19 fixture cases against `handover/scripts/handover.py` in temporary git and non-git projects:
+Runs 55 fixture cases against `handover/scripts/handover.py` in temporary git and non-git projects:
 
 - matched baseline;
 - snapshot binding mismatch;
@@ -30,7 +30,13 @@ Runs 19 fixture cases against `handover/scripts/handover.py` in temporary git an
 - non-git project;
 - fingerprint SHA-256 mismatch;
 - `.claude/` and `.git/` exclusion;
-- `list` title from frontmatter and fallback to task-id.
+- `list` title from frontmatter and fallback to task-id;
+- config parsing without frontmatter delimiters and invalid-value warning;
+- missing/mismatched task binding fields (`schema`, `task_id`, `project_root`, `fingerprint_file`, `fingerprint_sha256`);
+- empty-scope refusal, root-directory scope, out-of-scope change reporting, and size-change classification;
+- symlinked sidecar output refusal and cross-project `list` symlink protection;
+- duplicate task-id visibility;
+- `status-guard` absent/active/completed/cancelled/unknown/outside-root cases and explicit reopen authorisation.
 - `ignore-check` ok when `.handover/` and `handover.md` are ignored and untracked;
 - `ignore-check` warning when ignore rules are missing;
 - `ignore-check` warning when task data is tracked even if ignore rules exist;

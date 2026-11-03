@@ -2,7 +2,7 @@
 
 A Claude Code skill for carrying task state across sessions: manually **save** a verified handover, then **load** it in a fresh session or a parallel task.
 
-> Status: **v1.1.0**. Static validation and the fixture suite pass; controlled fixture acceptance covers archive/restore, project isolation, and 1.0-style migration. Real business-project trials, real 1.0.0 artifacts, concurrency, and real permission modes remain untested.
+> Status: **v1.1.1**. Static validation and 55/55 fixture cases pass; v1.1.1 headless save/load and status-selection smokes also passed. The full change → load → save chain and controlled fixture acceptance remain the v1.1.0-rc.1 record. Real business-project trials, real 1.0.0 artifacts, concurrency, and real permission modes remain untested.
 
 ## Why
 
@@ -30,7 +30,7 @@ Copy the `handover/` folder into one of these locations:
 
 The final path must contain `.../skills/handover/SKILL.md`.
 
-For a trial, prefer a temporary project so you do not overwrite an existing skill.
+For a trial, prefer a temporary project so you do not overwrite an existing skill. If a global and a project-level `handover` both exist, verify which copy Claude Code resolves; a stale global copy can shadow the project copy. Replace or remove the old copy before testing a new version.
 
 ## Usage
 
@@ -79,7 +79,7 @@ handover/                  # the installable skill
 ├── references/task-template.md
 ├── CHECKLIST.md
 ├── SOURCES.md
-├── scripts/handover.py    # optional list / fingerprint / check / ignore-check
+├── scripts/handover.py    # optional list / fingerprint / check / status-guard / ignore-check / stats / analysis
 ├── VALIDATION.md
 ├── FIXTURE_TEST_RESULTS.md
 ├── E2E_TEST_RESULTS.md
@@ -102,25 +102,28 @@ python3 -I tests/validate_handover.py handover
 python3 -I tests/run_fixture_tests.py
 ```
 
-Current results (summary; the canonical scoped matrix is in `handover/E2E_TEST_RESULTS.md`):
+Current results:
 
 | Layer | Result |
 |---|---|
-| Static/structural | PASS, no errors |
-| Script fixtures | 19/19 PASS |
-| Real Claude Code E2E (minimal save/load/change) | PASS after a scope fix |
-| Controlled fixture acceptance (no-ID load, multi-turn, A/B isolation, archive/restore, 1.0-style migration) | PASS in temporary projects/fixtures |
-| Real business project, real 1.0.0 artifact, concurrency/real permission modes, full 70-item checklist | Not executed |
+| Static/structural (`VALIDATION.md`) | PASS, no errors |
+| Script fixtures (`FIXTURE_TEST_RESULTS.md`) | 55/55 PASS |
+| v1.1.1 headless save/load smoke | PASS; full change → load → save chain not rerun |
+| v1.1.1 status-selection smoke | PASS; completed tasks not reused; new in-progress task created |
+| Real Claude Code E2E (rc.1 minimal save/load/change) | PASS after a scope fix; not rerun for v1.1.1 |
+| Controlled fixture acceptance (rc.1: no-ID load, multi-turn, A/B isolation, archive/restore, 1.0-style migration) | PASS in temporary projects/fixtures; not rerun for v1.1.1 |
+| Real business project, real 1.0.0 artifact, concurrency/real permission modes, full 110-item checklist | Not executed |
 
-Controlled fixture acceptance is not a real-project trial; see `handover/VALIDATION.md`, `handover/FIXTURE_TEST_RESULTS.md`, and `handover/E2E_TEST_RESULTS.md` for scope and evidence.
+`VALIDATION.md` and `FIXTURE_TEST_RESULTS.md` are the current v1.1.1 records. `E2E_TEST_RESULTS.md` remains the v1.1.0-rc.1 record; it is not v1.1.1 evidence. Controlled fixture acceptance is not a real-project trial.
 
 `SHA256SUMS.txt` verifies file digests only; it does not prove logic, installation, permissions, or safety.
 
 ## Known limitations
 
 - Archive/restore are instruction-based, not scripted; real file-move failure behavior is still being validated.
-- The template path is an inline `references/task-template.md` reference. A real E2E generated the full template structure from a non-skill directory, but the exact tool call was not captured because session persistence was disabled. Verify once in a new session.
-- The fingerprint covers declared files plus relevant git state; it does not prove the whole project is consistent.
+- `SKILL.md` routes to `references/`, and `references/save.md` points to `references/task-template.md`. The v1.1.0 headless brief E2E exercised the new references, but the full save/load/change E2E and template read were not rerun after rc.1. Verify once in a new session.
+- The fingerprint covers declared files plus relevant git state; it does not prove the whole project is consistent. `matched` output now reports out-of-scope change counts, but that is transparency, not full-project verification.
+- v1.1.1 fixes are covered by fixtures and headless save/load + status-selection smokes: empty-scope refusal, complete task/sidecar binding, root-directory scope, symlink write/list protection, config parsing, first-save `ignore-check`, and `status-guard` for completed/cancelled save targets. The full change → load → save chain was not rerun.
 - The skill is a prompt-based skill, not a background service or a deterministic state machine.
 
 ## License

@@ -83,7 +83,8 @@ disable-model-invocation: true
 - 交接操作不修改业务代码，不切换分支，不 commit/push/stash/reset，不安装依赖、启动服务、部署或清空会话。不自动修改 CLAUDE.md、.gitignore 或项目配置。
 - 不默认重新运行测试。只运行必要的本地只读检查；遇到命令失败、权限不足或无 Git 时如实记录，不将失败解释为空结果。
 - 不读取或保存密钥、token、密码、私钥、完整 .env、含凭证连接串或不必要的个人信息。环境仅记录变量名、用途和安全获取方式。检查 diff 时避开敏感文件；意外遇到敏感值不回显、不写入交接。
-- Git 项目使用本 Skill 时，`save`/`archive`/`restore` 前应确认 `.handover/` 与 `handover.md` 未被 Git 跟踪（例如用只读的 `git ls-files` 检查），并确认项目 `.gitignore` 覆盖它们；仅存在忽略规则不足以证明不会被提交。未被忽略或已被跟踪时明确提醒用户，但不要自动修改 `.gitignore` 或执行 `git rm`。任务 frontmatter 含本地绝对路径，任务数据不得提交。
+- Git 项目 `save`/`archive`/`restore` 前确认 `.handover/` 与 `handover.md` 未被跟踪且被 `.gitignore` 覆盖（`git ls-files`/`ignore-check`）；未忽略或已跟踪时提醒，不自动改 `.gitignore` 或 `git rm`。任务数据勿提交。
+- `save` 无 ID 只复用 active；completed/cancelled 不是目标，默认新建 `in-progress`。重开需用户明确授权；`completed` 需用户确认+验收证据，冲突用 `blocked`。
 - 不全量读取无关目录、日志或历史任务；不批量读取其他任务正文。使用最少必要上下文，优先引用路径和函数/符号，行号仅辅助定位。优先引用已有 spec、ADR、issue、commit、diff，不重复其内容。
 - 不声称提供强制权限沙箱、并发锁或代码备份。
 

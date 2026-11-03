@@ -6,6 +6,17 @@
 
 移动前运行 `python3 -I "<skill-dir>/scripts/handover.py" ignore-check --root <root>`（若可用），确认 `.handover/` 与 `handover.md` 为 `ignored, not-tracked`；warning/unknown 时报告，不自动修改 `.gitignore`，不执行 `git rm`。`<skill-dir>` 是 Skill 安装目录。
 
+## 安全移动顺序（archive/restore 共用）
+
+1. 先确认目标文件不存在；目标同名不覆盖。
+2. 先复制任务 Markdown 到目标路径并回读；再复制 sidecar 到同 stem 的 `.fingerprint.json`，核对 `snapshot_id`。
+3. 只有任务和 sidecar 都已在目标位置且回读通过后，才删除源文件。
+4. 删除源失败：保留源文件，报告“目标副本已存在、源仍在”，不宣称移动完成；不要为了清理而删除唯一副本。
+5. 不要先删除源再复制；不要在目标未验证时删除源。
+6. 入口更新最后执行；入口失败不回滚文件，报告实际位置和已完成步骤。
+
+该顺序是降低记录丢失的操作规则，不是原子移动或并发锁。
+
 ## Archive
 
 1. 指定 task-id；默认只允许 completed/cancelled。stale 的活跃任务只提示复核，不自动归档。用户明确要求归档其他状态时，必须在归档记录中写明原因；仍不自动执行。
