@@ -35,6 +35,7 @@
 /handover archive login
 /handover restore login-20261102t103000z
 /handover load --archived login-20261102t103000z
+/handover analysis
 ```
 
 - save：保存当前会话中该任务的目标、状态和证据，不保存完整窗口。成功后输出精确的 `/handover load <task-id>`。
@@ -43,9 +44,55 @@
 - brief：了解当前项目背景，不执行旧任务。
 - archive：默认只归档 completed/cancelled；不删除，更新入口链接。
 - restore：恢复归档到当前记录区，状态为 paused；需重新 `load` 核验后再继续。
+- analysis：只读审计当前会话的 context 使用，按 system prompt、MCP 工具 schema、transcript、磁盘配置分组给出建议；不改变任务或配置，不自动关闭 MCP server。
 - 不带参数默认 save；不带 ID 的 load 仅在“唯一 in-progress 任务且 freshness=fresh”时自动选择；多个 in-progress、stale/unknown、或只有 pending/blocked/paused 时列候选，不自动选择；只有 completed/cancelled/归档（或没有任何任务）时提示没有进行中任务。fresh 只允许自动选择，不跳过 consistency 核验，也不自动开发。
 - task-id 允许 1–64 位小写字母、数字和短横线，首位必须是字母或数字。保留字 save/load/brief/list/archive/restore 不能作为 task-id。
 - `/handover login` 是 `/handover save login` 的简写。
+
+## 上下文预算与按需读取
+
+- `brief`/`load` 默认先读索引和摘要，再按需读正文；不重复读已在上下文中的文件。
+- `brief` 默认读取：项目入口 + README/背景文档开头 +（如指定任务或入口只有一个任务）快速接手摘要 + git 状态；证据读取默认 ≤ 4k tokens。
+- `load` 默认读取：项目入口 + task frontmatter + 快速接手摘要 + 当前进度 + 下一步 + 并行与依赖 + `check` 摘要 + “接手必读”索引；证据读取默认 ≤ 6k tokens（不含 SKILL.md、模式 reference 和 `check` 输出）。
+- “接手必读”是索引：`path#symbol` / `path:start-end`；不整文件读取；默认 ≤ 1.5k tokens。
+- 大文件用 Grep 或 Read offset；`git diff` 先 `--stat`，再按相关路径读取。
+- 需要完整细节时，先读用户点名的章节；报告“已读/未读/截断”。
+- 模式细节在 `references/` 中按需加载；`SKILL.md` 保持轻量。
+- Token 卫生：只写 delta，不重复状态；紧凑 Markdown；避免宽表格；不粘贴代码/diff；必要的空格/标点不删。结构化小块可用 TSV/TOON，任务文档主体仍用 Markdown。
+
+## Token 效率原则（模型加载内容）
+
+适用于 `SKILL.md`、`references/`、任务文档、`handover.md`、brief/load 输出；目标是有限 context 中装最多可核验信息。
+
+- 保留结构必需：标题、列表标记、frontmatter 分隔符、key/value 分隔符、必要换行。
+- 删除装饰性空格/对齐空格/行尾空格、连续空行、水平分隔线、emoji/ASCII 装饰。
+- 跨文件去重：`handover.md` 只保留任务索引和真正的跨任务风险；任务摘要/验证证据/任务内风险不复制。
+- 同一验证命令只写一次；其他章节引用。
+- 用 `path#symbol` / commit hash / URL 引用，不粘贴代码/diff。
+- 不做 zero-space minify；不破坏 YAML/JSON schema。
+- `README` / `CHECKLIST` / `E2E_TEST_RESULTS` 是给人看的，不参与模型上下文，保持可读。
+- 用 `stats` 测量章节占比，优先砍高占比的重复/无关内容。
+
+## Token 统计（可选）
+
+保存后可以查看任务文档的近似 token 分布：
+
+```text
+python3 -I scripts/handover.py stats --root <project> --task <task-id>
+python3 -I scripts/handover.py stats --root <project> --task <task-id> --json
+```
+
+输出 frontmatter 与各 `##` 章节的近似 token、占比、行数，以及空行/行尾空格/装饰性分隔线统计。估算使用 UTF-8 bytes / 3，不是分词器精确值；用于找“最贵的章节”，不要按空格盲目压缩。
+
+## Context 分析（可选）
+
+`/handover analysis` 只读审计当前会话的 context 使用。它读取会话 transcript 的 `api-request-shape`（system prompt + tool schemas）和消息 blob，按 MCP server、消息类别、tool result、磁盘配置分组，并给出建议：
+
+```text
+python3 -I scripts/handover.py analysis --root <project> [--session <id>] [--context-window <n>] [--json]
+```
+
+报告区分“request prefix（较精确）”“transcript blobs（可能含已压缩历史）”“config on disk（参考，可能重叠）”；`/context` 仍是官方口径。只读，不自动关闭 MCP server。
 
 ## 术语
 
@@ -174,6 +221,7 @@ project-b/
 - 本 Skill 不主动把任务进度写入长期记忆（Auto Memory / memory 文件）；但 Auto Memory、`CLAUDE.md`、其他规则和 hook 仍可能把旧信息带入新会话，需另行检查。
 - 同一会话连续 `load` 不同任务时，先前任务正文仍在上下文中；切换不相关任务优先新会话或先 `/clear` 再 `load`。归档、删除任务文件或加载另一任务都不会撤回已读内容。
 - 不要把 `handover.md` 用 `@handover.md` import 进 `CLAUDE.md`；不要在 `SessionStart` hook 注入全文；最多注入一行“有 in-progress 任务，是否 load”。
+- `brief`/`load` 有默认读取预算；超出时报告未读/截断，不静默丢弃。详细读取集见 `references/brief-load.md`。
 - 没有后台计时器；所有检查只在命令调用时发生。
 - 干净测试环境的验收：在没有额外导入、hook 或读取要求时，启动后没有由本 Skill 注入的交接正文；这不构成对所有环境的绝对保证。
 
@@ -199,8 +247,8 @@ project-b/
 
 ## 待验证项（v1.1.0-rc.1）
 
-- 模板路径：`SKILL.md` 仍使用 `references/task-template.md` 内联引用。2026-11-02 的最小 E2E 从非 Skill 所在目录启动，仍生成了完整模板结构，说明模板读取很可能成功；但该次运行禁用了会话持久化，没有保留精确工具调用，因此仍标为“待确认”。若后续失败，再改成 Markdown 链接或 `${CLAUDE_SKILL_DIR}`。本 draft 不预设修改。
-- 文档长度：先观察真实任务文档的行数与内容；只有确实重复 specs/diffs/代码或明显膨胀时，才加软性 guideline。本 draft 不设硬性 100–200 行限制。
+- 模板路径：`SKILL.md` 不再内联模板内容；`references/save.md` 通过相对路径 `task-template.md` 引用，`SKILL.md` 通过 Markdown 链接路由到 `references/`。2026-11-02 的最小 E2E 验证的是旧版内联路径；新版尚未重新 E2E，读取模板的真实行为仍标为“待确认”。若失败，按 harness 给出的 Skill base directory 解析。
+- 文档长度：初始 draft 不设硬性限制；后续观察到 `brief`/`load` 上下文成本过高，现已改为按需读取 + 软性预算（任务文档建议 ≤ 200 行 / ≤ 4k tokens；`SKILL.md` ≤ 12KB）。该预算不改变任务语义，只限制默认读取范围。
 - 固定 token 阈值：本 draft 不采用；60% 仅作个人提醒。
 - archive/restore 仍是指令型操作，尚未脚本化；记录组规则已写明，但文件移动与入口更新的真实失败行为需在端到端验收中确认。
 
@@ -227,11 +275,17 @@ project-b/
 
 ## 文件
 
-- `SKILL.md`：主流程与安全边界。
+- `SKILL.md`：轻量路由、项目识别、安全边界与读取预算。
 - `references/task-template.md`：任务文档结构（YAML frontmatter + 正文）。
+- `references/brief-load.md`：`brief`/`load` 的默认读取集、质量检查表和输出。
+- `references/save.md`：`save` 流程。
+- `references/archive-restore.md`：`archive`/`restore` 记录组规则。
+- `references/data-model.md`：数据布局、task-id、YAML、状态轴、旧格式迁移。
+- `references/fingerprint.md`：指纹与忽略检查。
+- `references/analysis.md`：只读 context 审计的步骤、报告格式和安全边界。
 - `CHECKLIST.md`：首次使用验收场景。
 - `SOURCES.md`：官方参考链接。
-- `scripts/handover.py`：可选的 list / fingerprint / check / ignore-check 工具。
+- `scripts/handover.py`：可选的 list / fingerprint / check / ignore-check / stats 工具。
 - `VALIDATION.md`：结构/静态检查结果。
 - `FIXTURE_TEST_RESULTS.md`：脚本 fixture 测试结果（与 Claude Code 端到端测试分开）。
 - `E2E_TEST_RESULTS.md`：Claude Code 真实 save/load/change 链路结果（与 fixture 测试分开）。

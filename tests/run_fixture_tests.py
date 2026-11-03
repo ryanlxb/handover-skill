@@ -358,6 +358,213 @@ def case_ignore_check_not_git() -> None:
     record("ignore-check: 非 Git 项目", "not-git, exit 0", code, out, err, ok)
 
 
+def case_stats_text() -> None:
+    root = make_root()
+    code, out, err = run(["stats", "--root", str(root), "--task", "login"])
+    ok = (
+        code == 0
+        and "approx_tokens:" in out
+        and "frontmatter:" in out
+        and "decorative_lines:" in out
+        and "快速接手摘要" in out
+        and "sections (tokens, percent, lines):" in out
+    )
+    record("stats 文本输出：frontmatter + section 分布", "exit 0, contains sections", code, out, err, ok)
+
+
+def case_stats_json() -> None:
+    root = make_root()
+    code, out, err = run(["stats", "--root", str(root), "--task", "login", "--json"])
+    ok = False
+    detail = out
+    if code == 0:
+        try:
+            data = json.loads(out)
+            sections = data.get("sections") or []
+            fm = data.get("frontmatter") or {}
+            total_pct = float(fm.get("percent", 0)) + sum(
+                float(section.get("percent", 0)) for section in sections
+            )
+            ok = (
+                data.get("task_id") == "login"
+                and int(data.get("approx_tokens", 0)) > 0
+                and data.get("decorative_lines") == 0
+                and isinstance(sections, list)
+                and bool(sections)
+                and abs(total_pct - 100.0) <= 0.5
+            )
+        except (ValueError, TypeError) as exc:
+            detail = "json parse error: %s\n%s" % (exc, out)
+    record("stats --json：合法 JSON，percent 合计约 100", "exit 0, JSON valid", code, detail, err, ok)
+
+
+def case_stats_missing() -> None:
+    root = make_root()
+    code, out, err = run(["stats", "--root", str(root), "--task", "missing"])
+    ok = code == 2 and "not found" in err
+    record("stats：任务文件缺失", "exit 2, error", code, out, err, ok)
+
+
+def case_stats_outside() -> None:
+    root = make_root()
+    outside = root.parent / (root.name + "-outside.md")
+    outside.write_text("# outside\n", encoding="utf-8")
+    TEMP_PATHS.append(outside)
+    code, out, err = run(
+        ["stats", "--root", str(root), "--task", "login", "--task-file", str(outside)]
+    )
+    ok = code == 2 and "outside project root" in err
+    record("stats：task-file 在项目外", "exit 2, error", code, out, err, ok)
+
+
+def case_stats_invalid_task() -> None:
+    root = make_root()
+    code, out, err = run(["stats", "--root", str(root), "--task", "../bad"])
+    ok = code == 2 and "invalid task-id" in err
+    record("stats：非法 task-id", "exit 2, error", code, out, err, ok)
+
+
+def write_transcript(
+    root: Path, shapes: List[Dict[str, object]], blobs: List[Dict[str, object]]
+) -> Path:
+    path = root / "session.jsonl"
+    lines: List[str] = []
+    for index, shape in enumerate(shapes):
+        lines.append(
+            json.dumps(
+                {
+                    "type": "api-request-shape",
+                    "timestamp": "2026-11-03T00:00:0%dZ" % index,
+                    "shape": shape,
+                },
+                ensure_ascii=False,
+            )
+        )
+    lines.append(
+        json.dumps(
+            {
+                "type": "api-request",
+                "timestamp": "2026-11-03T00:00:09Z",
+                "params": {"model": "demo-model"},
+            },
+            ensure_ascii=False,
+        )
+    )
+    for index, message in enumerate(blobs):
+        lines.append(
+            json.dumps(
+                {"type": "api-request-blob", "hash": "h%d" % index, "message": message},
+                ensure_ascii=False,
+            )
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def analysis_fixture() -> Tuple[Path, Path]:
+    root = make_root()
+    shape_with = {
+        "system": [{"type": "text", "text": "system prompt"}],
+        "tools": [
+            {"name": "mcp__demo__big", "description": "x" * 3000, "input_schema": {"type": "object"}},
+            {"name": "Bash", "description": "y" * 100, "input_schema": {"type": "object"}},
+        ],
+    }
+    shape_without = {
+        "system": [{"type": "text", "text": "system prompt"}],
+        "tools": [{"name": "Bash", "description": "y" * 100, "input_schema": {"type": "object"}}],
+    }
+    blobs = [
+        {"role": "user", "content": "hello"},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"cmd": "ls"}}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "x" * 2000}],
+        },
+    ]
+    return root, write_transcript(root, [shape_with, shape_without], blobs)
+
+
+def case_analysis_text() -> None:
+    root, transcript = analysis_fixture()
+    code, out, err = run(["analysis", "--root", str(root), "--transcript", str(transcript)])
+    ok = (
+        code == 0
+        and "request prefix" in out
+        and "shape changes" in out
+        and "demo" in out
+        and "system_prompt" in out
+        and "recommendations:" in out
+    )
+    record("analysis 文本输出：tool schema + shape delta", "exit 0, contains groups", code, out, err, ok)
+
+
+def case_analysis_json() -> None:
+    root, transcript = analysis_fixture()
+    code, out, err = run(
+        ["analysis", "--root", str(root), "--transcript", str(transcript), "--json"]
+    )
+    ok = False
+    detail = out
+    if code == 0:
+        try:
+            data = json.loads(out)
+            groups = {
+                group.get("server"): group
+                for group in data.get("request_prefix", {}).get("tools", {}).get("groups", [])
+            }
+            changes = data.get("shape_changes") or []
+            ok = (
+                "builtin" in groups
+                and any(change.get("server") == "demo" and change.get("delta", 0) < 0 for change in changes)
+                and isinstance(data.get("recommendations"), list)
+                and "transcript_blobs" in data
+            )
+        except (ValueError, TypeError) as exc:
+            detail = "json parse error: %s\n%s" % (exc, out)
+    record("analysis --json：分组和 shape delta", "exit 0, JSON valid", code, detail, err, ok)
+
+
+def case_analysis_missing_transcript() -> None:
+    root = make_root()
+    code, out, err = run(
+        ["analysis", "--root", str(root), "--transcript", str(root / "missing.jsonl")]
+    )
+    ok = code == 2 and "transcript not found" in err
+    record("analysis：显式 transcript 缺失", "exit 2, error", code, out, err, ok)
+
+
+def case_analysis_no_transcript() -> None:
+    root = make_root()
+    code, out, err = run(["analysis", "--root", str(root)])
+    ok = code == 0 and "transcript: (not found)" in out
+    record("analysis：无 transcript 时仍给出配置报告", "exit 0, not found note", code, out, err, ok)
+
+
+def case_stats_no_frontmatter() -> None:
+    root = make_root()
+    plain = root / ".handover" / "plain.md"
+    plain.write_text("# Plain\n\n## A\nalpha\n\n---\n\n## B\nbeta\n", encoding="utf-8")
+    code, out, err = run(["stats", "--root", str(root), "--task", "plain", "--json"])
+    ok = False
+    if code == 0:
+        try:
+            data = json.loads(out)
+            sections = data.get("sections") or []
+            names = {section.get("section") for section in sections}
+            ok = (
+                int(data.get("frontmatter", {}).get("approx_tokens", -1)) == 0
+                and data.get("decorative_lines") == 1
+                and {"A", "B"}.issubset(names)
+            )
+        except (ValueError, TypeError):
+            ok = False
+    record("stats：无 frontmatter 的文档", "exit 0, frontmatter=0, decorative=1", code, out, err, ok)
+
+
 def _run_tests() -> int:
     tests = [
         case_matched,
@@ -379,6 +586,16 @@ def _run_tests() -> int:
         case_ignore_check_warning,
         case_ignore_check_tracked,
         case_ignore_check_not_git,
+        case_stats_text,
+        case_stats_json,
+        case_stats_missing,
+        case_stats_outside,
+        case_stats_invalid_task,
+        case_stats_no_frontmatter,
+        case_analysis_text,
+        case_analysis_json,
+        case_analysis_missing_transcript,
+        case_analysis_no_transcript,
     ]
     for test in tests:
         try:

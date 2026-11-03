@@ -26,6 +26,18 @@ ignore-check --root ROOT
     Check whether .handover/ and handover.md are both ignored by Git and not
     tracked. Exit 0 = ok or not a git work tree; 1 = warning; 2 = unknown.
 
+stats --root ROOT --task TASK [--task-file FILE] [--json]
+    Estimate the token distribution of a task document: frontmatter and each
+    "## " section. Read-only. Uses a rough UTF-8-bytes/3 heuristic, not a
+    tokenizer; use it to find expensive sections, not exact counts.
+
+analysis --root ROOT [--session ID] [--transcript FILE]
+         [--context-window N] [--json]
+    Read-only context audit. Parses the latest api-request-shape (system prompt
+    and tool schemas), transcript blobs (message/tool-result sizes), and
+    on-disk config sizes. Reports approximate tokens by category and ranked
+    recommendations. Does not print message contents or secrets.
+
 This script never modifies task files or business files. It only writes the
 fingerprint sidecar requested by `fingerprint`. Requires Python 3.9+.
 """
@@ -46,6 +58,8 @@ from typing import Any, Dict, List, Optional, Tuple
 SCHEMA = 1
 DEFAULT_STALE_DAYS = 14
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
+DEFAULT_CONTEXT_WINDOW = 1000000
+CLAUDE_HOME = Path.home() / ".claude"
 TASK_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 SNAPSHOT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -812,6 +826,582 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def estimate_tokens(text: str) -> int:
+    """Rough mixed-language estimate: UTF-8 bytes / 3.
+
+    This is not a tokenizer. For mixed Chinese/English it is usually within
+    roughly 10-20% of cl100k-style counts; use it for relative distribution,
+    not exact billing.
+    """
+    return max(1, (len(text.encode("utf-8")) + 2) // 3)
+
+
+def split_sections(body_lines: List[str]) -> List[Tuple[str, List[str]]]:
+    """Split Markdown body into ("## " heading, lines) sections."""
+    sections: List[Tuple[str, List[str]]] = []
+    name = "(preamble)"
+    current: List[str] = []
+    for line in body_lines:
+        if line.startswith("## "):
+            sections.append((name, current))
+            name = line[3:].strip() or "(untitled)"
+            current = [line]
+        else:
+            current.append(line)
+    sections.append((name, current))
+    return [(n, lines) for n, lines in sections if "\n".join(lines).strip()]
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    if not TASK_RE.match(args.task):
+        print("error: invalid task-id: %s" % args.task, file=sys.stderr)
+        return 2
+    task_file = Path(args.task_file) if args.task_file else (root / ".handover" / (args.task + ".md"))
+    task_file = task_file.resolve()
+    if not within_root(root, task_file):
+        print("error: task file outside project root", file=sys.stderr)
+        return 2
+    if not task_file.is_file():
+        print("error: task file not found: %s" % task_file, file=sys.stderr)
+        return 2
+    try:
+        text = task_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print("error: cannot read task file: %s" % exc, file=sys.stderr)
+        return 2
+
+    lines = text.splitlines()
+    fm_end: Optional[int] = None
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                fm_end = i
+                break
+    if fm_end is None:
+        frontmatter_lines: List[str] = []
+        body_lines = lines
+    else:
+        frontmatter_lines = lines[: fm_end + 1]
+        body_lines = lines[fm_end + 1 :]
+
+    fm_text = "\n".join(frontmatter_lines)
+    fm_tokens = estimate_tokens(fm_text) if frontmatter_lines else 0
+    decorative_lines = sum(1 for line in body_lines if line.strip() in ("---", "***", "___"))
+    sections: List[Dict[str, Any]] = []
+    for name, sec_lines in split_sections(body_lines):
+        sec_text = "\n".join(sec_lines)
+        sections.append(
+            {
+                "section": name,
+                "lines": len(sec_lines),
+                "bytes": len(sec_text.encode("utf-8")),
+                "approx_tokens": estimate_tokens(sec_text),
+            }
+        )
+    total_tokens = fm_tokens + sum(int(s["approx_tokens"]) for s in sections)
+    if total_tokens <= 0:
+        total_tokens = 1
+    for section in sections:
+        section["percent"] = round(100.0 * float(section["approx_tokens"]) / total_tokens, 1)
+    fm_percent = round(100.0 * fm_tokens / total_tokens, 1)
+
+    payload: Dict[str, Any] = {
+        "task_id": args.task,
+        "file": str(task_file.relative_to(root)) if within_root(root, task_file) else str(task_file),
+        "bytes": len(text.encode("utf-8")),
+        "lines": len(lines),
+        "blank_lines": sum(1 for line in lines if not line.strip()),
+        "trailing_ws_lines": sum(1 for line in lines if line != line.rstrip()),
+        "decorative_lines": decorative_lines,
+        "approx_tokens": total_tokens,
+        "estimator": "utf8_bytes/3",
+        "frontmatter": {
+            "lines": len(frontmatter_lines),
+            "bytes": len(fm_text.encode("utf-8")),
+            "approx_tokens": fm_tokens,
+            "percent": fm_percent,
+        },
+        "sections": sorted(sections, key=lambda item: int(item["approx_tokens"]), reverse=True),
+    }
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        return 0
+
+    print("task: %s" % payload["task_id"])
+    print("file: %s" % payload["file"])
+    print("bytes: %d" % payload["bytes"])
+    print("lines: %d" % payload["lines"])
+    print("blank_lines: %d" % payload["blank_lines"])
+    print("trailing_ws_lines: %d" % payload["trailing_ws_lines"])
+    print("decorative_lines: %d" % payload["decorative_lines"])
+    print("approx_tokens: %d (estimator: %s)" % (payload["approx_tokens"], payload["estimator"]))
+    if frontmatter_lines:
+        print(
+            "frontmatter: %d tokens (%.1f%%), %d lines, %d bytes"
+            % (fm_tokens, fm_percent, len(frontmatter_lines), len(fm_text.encode("utf-8")))
+        )
+    print("sections (tokens, percent, lines):")
+    for section in payload["sections"]:
+        print(
+            "  %6d  %5.1f%%  %4d  %s"
+            % (
+                section["approx_tokens"],
+                section["percent"],
+                section["lines"],
+                section["section"],
+            )
+        )
+    top = payload["sections"][:3]
+    if top:
+        print(
+            "top: %s"
+            % ", ".join(
+                "%s (%d, %.1f%%)"
+                % (section["section"], section["approx_tokens"], section["percent"])
+                for section in top
+            )
+        )
+    print("note: rough estimate (UTF-8 bytes / 3); use the actual tokenizer for exact counts.")
+    return 0
+
+
+def claude_project_dir(root: Path) -> Path:
+    encoded = re.sub(r"[^A-Za-z0-9]", "-", str(root))
+    return CLAUDE_HOME / "projects" / encoded
+
+
+def find_transcript(
+    root: Path, session: Optional[str], transcript: Optional[str]
+) -> Tuple[Optional[Path], Optional[str]]:
+    if transcript:
+        path = Path(transcript).resolve()
+        if path.is_file():
+            return path, None
+        return None, "transcript not found: %s" % path
+    candidates: List[Path] = []
+    if session:
+        candidates.append(claude_project_dir(root) / (session + ".jsonl"))
+    env_session = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if env_session:
+        candidates.append(claude_project_dir(root) / (env_session + ".jsonl"))
+    for path in candidates:
+        if path.is_file():
+            return path, None
+    project_dir = claude_project_dir(root)
+    if project_dir.is_dir():
+        files = sorted(
+            (p for p in project_dir.glob("*.jsonl") if p.is_file()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if files:
+            return files[0], None
+    return None, "no session transcript found under %s" % project_dir
+
+
+def iter_jsonl(path: Path):
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return
+
+
+def measure_shape(shape: Dict[str, Any]) -> Dict[str, Any]:
+    system_blocks = shape.get("system") or []
+    system_items: List[Dict[str, Any]] = []
+    system_tokens = 0
+    for index, block in enumerate(system_blocks):
+        text = block.get("text", "") if isinstance(block, dict) else str(block)
+        tokens = estimate_tokens(text)
+        system_items.append(
+            {
+                "index": index,
+                "bytes": len(text.encode("utf-8")),
+                "approx_tokens": tokens,
+                "head": re.sub(r"\s+", " ", text[:80]),
+            }
+        )
+        system_tokens += tokens
+    groups: Dict[str, Dict[str, Any]] = {}
+    tool_tokens = 0
+    for tool in shape.get("tools") or []:
+        name = tool.get("name", "?") if isinstance(tool, dict) else "?"
+        blob = json.dumps(tool, ensure_ascii=False, separators=(",", ":"))
+        tokens = estimate_tokens(blob)
+        group = name.split("__")[1] if name.startswith("mcp__") and "__" in name else "builtin"
+        entry = groups.setdefault(group, {"tools": 0, "bytes": 0, "approx_tokens": 0})
+        entry["tools"] += 1
+        entry["bytes"] += len(blob.encode("utf-8"))
+        entry["approx_tokens"] += tokens
+        tool_tokens += tokens
+    return {
+        "system": {"approx_tokens": system_tokens, "blocks": system_items},
+        "tools": {
+            "approx_tokens": tool_tokens,
+            "groups": sorted(
+                ({"server": key, **value} for key, value in groups.items()),
+                key=lambda item: int(item["approx_tokens"]),
+                reverse=True,
+            ),
+        },
+    }
+
+
+def message_text(message: Dict[str, Any]) -> str:
+    content = message.get("content")
+    parts: List[str] = []
+    if isinstance(content, str):
+        parts.append(content)
+    elif isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            kind = block.get("type")
+            if kind == "text":
+                parts.append(str(block.get("text") or ""))
+            elif kind == "thinking":
+                parts.append(str(block.get("thinking") or ""))
+            elif kind == "tool_use":
+                parts.append(
+                    json.dumps(block.get("input") or {}, ensure_ascii=False, separators=(",", ":"))
+                )
+            elif kind == "tool_result":
+                inner = block.get("content")
+                if isinstance(inner, str):
+                    parts.append(inner)
+                elif isinstance(inner, list):
+                    parts.append(
+                        "\n".join(
+                            str(item.get("text") or "")
+                            for item in inner
+                            if isinstance(item, dict)
+                        )
+                    )
+    return "\n".join(parts)
+
+
+def measure_blobs(blobs: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    tool_names: Dict[str, str] = {}
+    for message in blobs.values():
+        content = message.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    tool_names[str(block.get("id") or "")] = str(block.get("name") or "?")
+    totals = {"system": 0, "user": 0, "assistant": 0, "tool_results": 0, "other": 0}
+    tool_results: Dict[str, int] = {}
+    for message in blobs.values():
+        role = str(message.get("role") or "other")
+        content = message.get("content")
+        blocks = content if isinstance(content, list) else []
+        has_result = any(
+            isinstance(block, dict) and block.get("type") == "tool_result" for block in blocks
+        )
+        tokens = estimate_tokens(message_text(message))
+        if has_result:
+            totals["tool_results"] += tokens
+            for block in blocks:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                name = tool_names.get(str(block.get("tool_use_id") or ""), "tool_result")
+                inner = block.get("content")
+                if isinstance(inner, str):
+                    inner_text = inner
+                elif isinstance(inner, list):
+                    inner_text = "\n".join(
+                        str(item.get("text") or "")
+                        for item in inner
+                        if isinstance(item, dict)
+                    )
+                else:
+                    inner_text = ""
+                if inner_text:
+                    tool_results[name] = tool_results.get(name, 0) + estimate_tokens(inner_text)
+        elif role == "system":
+            totals["system"] += tokens
+        elif role == "user":
+            totals["user"] += tokens
+        elif role == "assistant":
+            totals["assistant"] += tokens
+        else:
+            totals["other"] += tokens
+    return {
+        "messages": len(blobs),
+        "approx_tokens": sum(totals.values()),
+        "by_category": totals,
+        "top_tool_results": sorted(
+            ({"tool": key, "approx_tokens": value} for key, value in tool_results.items()),
+            key=lambda item: int(item["approx_tokens"]),
+            reverse=True,
+        )[:10],
+    }
+
+
+def measure_config(root: Path) -> List[Dict[str, Any]]:
+    candidates: List[Tuple[str, Path]] = [
+        ("project CLAUDE.md", root / "CLAUDE.md"),
+        ("global CLAUDE.md", CLAUDE_HOME / "CLAUDE.md"),
+    ]
+    rules = CLAUDE_HOME / "rules"
+    if rules.is_dir():
+        candidates.extend(("global rule", path) for path in sorted(rules.glob("*.md")))
+    memory = claude_project_dir(root) / "memory"
+    if memory.is_dir():
+        candidates.extend(("memory", path) for path in sorted(memory.glob("*.md")))
+    for base, label in (
+        (CLAUDE_HOME / "skills", "global skill"),
+        (root / ".claude" / "skills", "project skill"),
+    ):
+        if base.is_dir():
+            candidates.extend((label, path) for path in sorted(base.glob("*/SKILL.md")))
+    if (root / "handover.md").is_file():
+        candidates.append(("handover entry", root / "handover.md"))
+    task_dir = root / ".handover"
+    if task_dir.is_dir():
+        candidates.extend(("task doc", path) for path in sorted(task_dir.glob("*.md")))
+    items: List[Dict[str, Any]] = []
+    for label, path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if label in ("global skill", "project skill"):
+            display = "%s/%s" % (path.parent.name, path.name)
+        else:
+            display = path.name
+        items.append(
+            {
+                "label": label,
+                "display": display,
+                "bytes": len(text.encode("utf-8")),
+                "approx_tokens": estimate_tokens(text),
+            }
+        )
+    return sorted(items, key=lambda item: int(item["approx_tokens"]), reverse=True)[:20]
+
+
+def cmd_analysis(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    transcript_path, transcript_note = find_transcript(root, args.session, args.transcript)
+    if (args.transcript or args.session) and not transcript_path:
+        print("error: %s" % (transcript_note or "transcript not found"), file=sys.stderr)
+        return 2
+    shapes: List[Tuple[str, Dict[str, Any]]] = []
+    blobs: Dict[str, Dict[str, Any]] = {}
+    model: Optional[str] = None
+    if transcript_path:
+        for obj in iter_jsonl(transcript_path):
+            kind = obj.get("type")
+            if kind == "api-request-shape":
+                shapes.append((str(obj.get("timestamp") or ""), obj.get("shape") or {}))
+            elif kind == "api-request":
+                params = obj.get("params") or {}
+                if params.get("model"):
+                    model = str(params.get("model"))
+            elif kind == "api-request-blob":
+                digest = obj.get("hash")
+                message = obj.get("message")
+                if digest and isinstance(message, dict):
+                    blobs[digest] = message
+    latest_shape = max(shapes, key=lambda item: item[0])[1] if shapes else {}
+    previous_shape = sorted(shapes, key=lambda item: item[0])[-2][1] if len(shapes) >= 2 else {}
+    shape_data = measure_shape(latest_shape)
+    previous_data = measure_shape(previous_shape) if previous_shape else None
+    blob_data = measure_blobs(blobs) if blobs else None
+    config_data = measure_config(root)
+    context_window = max(1, int(args.context_window))
+
+    def pct(tokens: int) -> float:
+        return round(100.0 * tokens / context_window, 1)
+
+    prefix_tokens = int(shape_data["system"]["approx_tokens"]) + int(
+        shape_data["tools"]["approx_tokens"]
+    )
+    blob_tokens = int(blob_data["approx_tokens"]) if blob_data else 0
+    measured_total = prefix_tokens + blob_tokens
+
+    for group in shape_data["tools"]["groups"]:
+        group["percent"] = pct(int(group["approx_tokens"]))
+    for item in (blob_data or {}).get("by_category", {}).items():
+        if blob_data:
+            blob_data["by_category"][item[0]] = {
+                "approx_tokens": item[1],
+                "percent": pct(item[1]),
+            }
+    for item in (blob_data or {}).get("top_tool_results", []):
+        item["percent"] = pct(int(item["approx_tokens"]))
+
+    shape_changes: List[Dict[str, Any]] = []
+    if previous_data:
+        previous_groups = {
+            str(group["server"]): int(group["approx_tokens"])
+            for group in previous_data["tools"]["groups"]
+        }
+        current_groups = {
+            str(group["server"]): int(group["approx_tokens"])
+            for group in shape_data["tools"]["groups"]
+        }
+        for server in sorted(set(previous_groups) | set(current_groups)):
+            before = previous_groups.get(server, 0)
+            after = current_groups.get(server, 0)
+            if abs(after - before) >= 500:
+                shape_changes.append(
+                    {"server": server, "previous": before, "current": after, "delta": after - before}
+                )
+        shape_changes.sort(key=lambda item: abs(int(item["delta"])), reverse=True)
+
+    recommendations: List[str] = []
+    for group in shape_data["tools"]["groups"]:
+        if str(group["server"]) != "builtin" and int(group["approx_tokens"]) >= 5000:
+            recommendations.append(
+                "%s: %d tools / ~%d tok (%.1f%%); disable this MCP server if the task does not need it."
+                % (
+                    group["server"],
+                    group["tools"],
+                    group["approx_tokens"],
+                    pct(int(group["approx_tokens"])),
+                )
+            )
+    if blob_data:
+        for item in blob_data["top_tool_results"][:5]:
+            if int(item["approx_tokens"]) >= 5000:
+                recommendations.append(
+                    "tool result %s: ~%d tok; use Grep/Read offset or a read budget."
+                    % (item["tool"], item["approx_tokens"])
+                )
+        conversation = int(blob_data["by_category"].get("assistant", {}).get("approx_tokens", 0)) + int(
+            blob_data["by_category"].get("user", {}).get("approx_tokens", 0)
+        )
+        if conversation >= 50000:
+            recommendations.append(
+                "conversation history: ~%d tok; use /compact or a new session for unrelated work."
+                % conversation
+            )
+    for item in config_data:
+        if item["label"] in ("global rule", "project CLAUDE.md", "global CLAUDE.md", "memory") and int(
+            item["approx_tokens"]
+        ) >= 5000:
+            recommendations.append(
+                "%s: ~%d tok; trim it or move detail into references."
+                % (item["label"], item["approx_tokens"])
+            )
+    if not transcript_path:
+        recommendations.append(
+            "No transcript found; run /context in the session for the official breakdown."
+        )
+    if not shape_data["tools"]["groups"]:
+        recommendations.append(
+            "No api-request-shape found; tool schema sizes are unavailable in this transcript."
+        )
+    if not recommendations:
+        recommendations.append("No single large item detected at the current thresholds.")
+
+    payload: Dict[str, Any] = {
+        "project_root": str(root),
+        "transcript": str(transcript_path) if transcript_path else None,
+        "transcript_note": transcript_note,
+        "model": model,
+        "context_window": context_window,
+        "estimator": "utf8_bytes/3",
+        "request_prefix": {
+            "system": shape_data["system"],
+            "tools": shape_data["tools"],
+            "total_approx_tokens": prefix_tokens,
+            "percent": pct(prefix_tokens),
+        },
+        "shape_changes": shape_changes,
+        "transcript_blobs": blob_data,
+        "config_on_disk": config_data,
+        "measured_total_approx_tokens": measured_total,
+        "measured_total_percent": pct(measured_total),
+        "recommendations": recommendations,
+        "note": (
+            "request prefix is exact for the latest api-request-shape; transcript blobs may "
+            "include compacted history; /context is the official breakdown."
+        ),
+    }
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        return 0
+
+    print("context analysis — %s" % root)
+    print("transcript: %s" % (transcript_path if transcript_path else "(not found)"))
+    if transcript_note:
+        print("transcript_note: %s" % transcript_note)
+    if model:
+        print("model: %s" % model)
+    print("context_window: %d" % context_window)
+    print("")
+    print("request prefix (latest api-request-shape):")
+    print(
+        "  system_prompt: %d tok (%.1f%%)"
+        % (
+            shape_data["system"]["approx_tokens"],
+            pct(int(shape_data["system"]["approx_tokens"])),
+        )
+    )
+    print(
+        "  tool_schemas: %d tok (%.1f%%)"
+        % (shape_data["tools"]["approx_tokens"], pct(int(shape_data["tools"]["approx_tokens"])))
+    )
+    for group in shape_data["tools"]["groups"]:
+        print(
+            "    %s: %d tools, %d tok (%.1f%%)"
+            % (group["server"], group["tools"], group["approx_tokens"], group["percent"])
+        )
+    print("  prefix_total: %d tok (%.1f%%)" % (prefix_tokens, pct(prefix_tokens)))
+    if shape_changes:
+        print("")
+        print("shape changes:")
+        for change in shape_changes:
+            print(
+                "  %s: %d -> %d (%+d)"
+                % (change["server"], change["previous"], change["current"], change["delta"])
+            )
+    if blob_data:
+        print("")
+        print("transcript blobs (all; may include compacted history):")
+        print(
+            "  total: %d tok (%.1f%%), %d messages"
+            % (blob_data["approx_tokens"], pct(int(blob_data["approx_tokens"])), blob_data["messages"])
+        )
+        for name in ("system", "user", "assistant", "tool_results", "other"):
+            value = blob_data["by_category"].get(name, {})
+            if value:
+                print("  %s: %d tok (%.1f%%)" % (name, value["approx_tokens"], value["percent"]))
+        if blob_data["top_tool_results"]:
+            print("  top tool results:")
+            for item in blob_data["top_tool_results"]:
+                print("    %s: %d tok (%.1f%%)" % (item["tool"], item["approx_tokens"], item["percent"]))
+    if config_data:
+        print("")
+        print("config on disk (reference; may overlap with the request prefix):")
+        for item in config_data[:10]:
+            print("  %s: %d tok — %s" % (item["label"], item["approx_tokens"], item["display"]))
+    print("")
+    print("measured_total: %d tok (%.1f%%)" % (measured_total, pct(measured_total)))
+    print("")
+    print("recommendations:")
+    for recommendation in recommendations:
+        print("  - %s" % recommendation)
+    print("")
+    print("note: %s" % payload["note"])
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Handover skill helpers (stdlib only)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -843,6 +1433,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_ignore = sub.add_parser("ignore-check", help="check task data is ignored and untracked")
     p_ignore.add_argument("--root", required=True)
     p_ignore.set_defaults(func=cmd_ignore_check)
+
+    p_stats = sub.add_parser("stats", help="estimate token distribution of a task document")
+    p_stats.add_argument("--root", required=True)
+    p_stats.add_argument("--task", required=True)
+    p_stats.add_argument("--task-file")
+    p_stats.add_argument("--json", action="store_true")
+    p_stats.set_defaults(func=cmd_stats)
+
+    p_analysis = sub.add_parser("analysis", help="audit context usage from the session transcript")
+    p_analysis.add_argument("--root", required=True)
+    p_analysis.add_argument("--session")
+    p_analysis.add_argument("--transcript")
+    p_analysis.add_argument("--context-window", type=int, default=DEFAULT_CONTEXT_WINDOW)
+    p_analysis.add_argument("--json", action="store_true")
+    p_analysis.set_defaults(func=cmd_analysis)
     return parser
 
 

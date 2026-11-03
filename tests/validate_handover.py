@@ -22,9 +22,36 @@ REQUIRED = [
     "SKILL.md",
     "README.md",
     "references/task-template.md",
+    "references/brief-load.md",
+    "references/save.md",
+    "references/archive-restore.md",
+    "references/data-model.md",
+    "references/fingerprint.md",
+    "references/analysis.md",
     "CHECKLIST.md",
     "SOURCES.md",
     "scripts/handover.py",
+]
+
+# Keep the model-facing router small; mode details live in references/.
+SIZE_BUDGETS = {
+    "SKILL.md": 12000,
+    "references/brief-load.md": 10000,
+    "references/save.md": 12000,
+    "references/archive-restore.md": 8000,
+    "references/data-model.md": 12000,
+    "references/fingerprint.md": 8000,
+    "references/analysis.md": 10000,
+    "references/task-template.md": 8000,
+}
+
+REFERENCE_LINKS = [
+    "references/brief-load.md",
+    "references/save.md",
+    "references/archive-restore.md",
+    "references/data-model.md",
+    "references/fingerprint.md",
+    "references/analysis.md",
 ]
 
 SKILL_KEYS = ["name", "description", "argument-hint", "disable-model-invocation"]
@@ -157,6 +184,10 @@ def main() -> int:
             continue
         lines = len(text.splitlines())
         size = len(text.encode("utf-8"))
+        if rel in SIZE_BUDGETS and size > SIZE_BUDGETS[rel]:
+            errors.append(
+                "%s: exceeds size budget (%d > %d bytes)" % (rel, size, SIZE_BUDGETS[rel])
+            )
         ok_fences, fence_count = check_fences(text)
         if not ok_fences:
             errors.append("%s: unbalanced code fences (%d fence lines)" % (rel, fence_count))
@@ -168,11 +199,14 @@ def main() -> int:
             errors.extend(check_frontmatter(path, text, SKILL_KEYS, rel))
             data = parse_frontmatter(text) or {}
             hint = data.get("argument-hint", "")
-            for mode in ("save", "load", "brief", "list", "archive", "restore"):
+            for mode in ("save", "load", "brief", "list", "archive", "restore", "analysis"):
                 if mode not in hint:
                     errors.append("SKILL.md: argument-hint missing mode '%s'" % mode)
             if data.get("disable-model-invocation") != "true":
                 errors.append("SKILL.md: disable-model-invocation should be true")
+            for ref in REFERENCE_LINKS:
+                if ref not in text:
+                    warnings.append("SKILL.md: does not reference %s" % ref)
         if rel == "references/task-template.md":
             errors.extend(check_frontmatter(path, text, TEMPLATE_KEYS, rel))
             if "2026-11-02T10:30:00+08:00" in text:
@@ -207,6 +241,7 @@ def main() -> int:
     print("- Python syntax: %s" % ("PASS" if python_syntax_ok else "FAIL"))
     print("- Local links: %s" % ("FAIL" if any("broken local link" in e for e in errors) else "PASS"))
     print("- Truncation markers: %s" % ("FAIL" if any("truncated" in e or "TODO" in e for e in errors) else "PASS"))
+    print("- Size budgets: %s" % ("FAIL" if any("size budget" in e for e in errors) else "PASS"))
     print("")
     if errors:
         print("## Errors")

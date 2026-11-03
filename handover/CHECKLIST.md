@@ -95,3 +95,24 @@
 68. 检查 Auto Memory / memory 目录：本 Skill 不写入任务进度；若其他机制写入旧任务状态，记录为外部上下文风险。
 69. list 标题：frontmatter 有 `title` 时显示 title；缺失时回退显示 task-id，不读取正文。
 70. load 的一致性核验优先运行 `check` 并读取精简结果；不得为了汇报而读取 sidecar 全文（排错时除外）。
+
+## 上下文预算与按需读取
+
+71. `SKILL.md` 不超过 12KB；模式细节在 `references/` 中按需加载。
+72. `brief` 默认不读完整任务正文；证据读取 ≤ 4k tokens；输出覆盖质量检查表（用途/技术栈/架构/验证/风险/并行/未知/来源）。
+73. `load` 默认不读完整任务正文；证据读取 ≤ 6k tokens（不含 SKILL.md、模式 reference 和 `check` 输出）；需要细节时按章节定点读取。
+74. “接手必读”使用 `path#symbol` / `path:start-end`，不写裸文件清单；总读取预算 ≤ 1.5k tokens。
+75. 大文件（>200 行或 >8KB）使用 Grep/Read offset，不整文件读取；`git diff` 先 `--stat` 再按相关路径读取。
+76. 超出预算时报告“未读/截断”，不静默丢弃；输出本次读取 N 个文件 / 约 M tokens。
+77. `references/` 中新增的 brief-load / save / archive-restore / data-model / fingerprint 均存在且链接可解析。
+78. 任务文档不重复状态：同一状态不在 frontmatter、快速摘要、当前进度、入口各写一遍。
+79. 任务文档/输出使用紧凑 Markdown；无装饰分隔线、无行尾空格、无宽表格；不粘贴代码/diff。
+80. 必要空格/标点保留；不做激进 minify；优先砍重复和无关内容，而不是空格。
+81. `stats` 输出 frontmatter 与各 `##` 章节的近似 token/占比/行数；不写文件。
+82. `stats --json` 输出合法 JSON，percent 合计约 100；缺失文件/非法 task-id/项目外 task-file 返回 exit 2。
+83. 模型加载文档删除装饰性空格/空行/分隔线；保留结构必需。
+84. 跨文件去重：`handover.md` 不复制任务摘要/验证证据/任务内风险；同一验证命令只写一次。
+85. 不为 token 优化破坏 YAML/JSON schema 或必要结构；`README`/`CHECKLIST`/`E2E_TEST_RESULTS` 保持可读。
+86. `analysis` 只读：不改变任务、不修改配置、不自动关闭 MCP server。
+87. `analysis` 报告按 system prompt、MCP server tool schema、transcript 类别、磁盘配置分组；区分 measured/estimate/unknown。
+88. `analysis` 不打印 transcript 正文、tool result 内容或密钥；`analysis` 不能作为 task-id。
