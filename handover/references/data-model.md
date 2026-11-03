@@ -51,6 +51,16 @@
 - `updated_at` 只在实质 save 时更新；list/load 不刷新。
 - 这些检查只在命令调用时发生，没有后台计时器。
 
+## 过期、复核与语义陈旧
+
+- `freshness`（时间）和 `consistency`（内容/git）是自动计算的信号；没有后台计时器，只在 list/load 等命令调用时计算。
+- `stale` 只是复核提醒，不是失效或删除；不自动归档、不自动删除。
+- `changed` 表示声明的文件/git 范围有明确变化；`unknown` 表示无法核验（无 sidecar、基线缺失、文件不可读、无 git）。
+- `matched` 只表示“声明范围内一致”，不表示任务语义仍然正确。
+- **语义陈旧**：任务进度/决策/外部依赖变化但未 save，fingerprint 可能完全匹配；只有新的 save 或人工复核能发现。load 的报告和 save 的 pre-check 只能降低风险，不能保证。
+- save 前应核验旧记录：changed 时对账，unknown 时说明，stale 时只读摘要/相关章节；不要把旧结论当当前事实。
+- 不自动删除过期记录；归档/清理由用户显式执行。
+
 ## 归档命名
 
 - `.handover/archive/<task-id>-<小写 UTC 时间戳>.md`
