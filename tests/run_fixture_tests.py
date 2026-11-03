@@ -613,7 +613,7 @@ def _run_tests() -> int:
             )
 
     passed = sum(1 for case in CASES if case["passed"])
-    print("# v1.1.0-rc.1 Fixture Test Results")
+    print("# v1.1.0 Fixture Test Results")
     print("")
     print("- Date (UTC): %s" % datetime.now(timezone.utc).isoformat(timespec="seconds"))
     try:

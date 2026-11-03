@@ -2,7 +2,7 @@
 
 A Claude Code skill for carrying task state across sessions: manually **save** a verified handover, then **load** it in a fresh session or a parallel task.
 
-> Status: **v1.1.0-rc.1 / release candidate**. Controlled trial only. Controlled fixture acceptance passed for archive/restore, project isolation, and 1.0-style migration; real business-project trials, real 1.0.0 artifacts, concurrency, and real permission modes remain untested.
+> Status: **v1.1.0**. Static validation and the fixture suite pass; controlled fixture acceptance covers archive/restore, project isolation, and 1.0-style migration. Real business-project trials, real 1.0.0 artifacts, concurrency, and real permission modes remain untested.
 
 ## Why
 

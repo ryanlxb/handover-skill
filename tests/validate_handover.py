@@ -220,7 +220,7 @@ def main() -> int:
                 warnings.append("README.md: does not reference E2E_TEST_RESULTS.md")
         files_report.append((rel, lines, size, "OK" if ok_fences else "FENCE-ERROR"))
 
-    print("# v1.1.0-rc.1 Validation Report")
+    print("# v1.1.0 Validation Report")
     print("")
     print("- Date (UTC): %s" % datetime.now(timezone.utc).isoformat(timespec="seconds"))
     print("- Target: `%s`" % target_arg)

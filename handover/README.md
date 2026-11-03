@@ -1,6 +1,6 @@
 # Handover Skill
 
-版本：1.1.0-rc.1
+版本：1.1.0
 
 用途：把当前会话的任务状态保存到项目本地，让新会话核验后继续，或只加载背景开始新任务。不是聊天记录备份，也不是代码备份。
 
@@ -21,7 +21,7 @@
 
 最终必须存在 `.../skills/handover/SKILL.md`。不要再套一层 handover。若已有同名 Skill，先自行备份再替换。
 
-**安装 1.1.0-rc.1 时建议先备份现有 Skill；若要并行试用，可用项目级安装或临时改 name，不要直接覆盖正在使用的稳定版。**
+**安装 1.1.0 时建议先备份现有 Skill；若要并行试用，可用项目级安装或临时改 name，不要直接覆盖正在使用的稳定版。**
 
 全局安装只是所有项目共用规则；任务数据仍分别存放在各项目，不存入全局 Skill 目录。
 
@@ -250,16 +250,16 @@ project-b/
 - `stale_after_days` 必须是合法正整数；无效配置告警后使用默认 14。
 - 模板中的示例日期仅作格式示例，不得原样写入真实任务。
 
-## 待验证项（v1.1.0-rc.1）
+## 待验证项（v1.1.0）
 
-- 模板路径：`SKILL.md` 不再内联模板内容；`references/save.md` 通过相对路径 `task-template.md` 引用，`SKILL.md` 通过 Markdown 链接路由到 `references/`。2026-11-02 的最小 E2E 验证的是旧版内联路径；新版尚未重新 E2E，读取模板的真实行为仍标为“待确认”。若失败，按 harness 给出的 Skill base directory 解析。
+- 模板路径：`SKILL.md` 不再内联模板内容；`references/save.md` 通过相对路径 `task-template.md` 引用，`SKILL.md` 通过 Markdown 链接路由到 `references/`。2026-11-02 的最小 E2E 验证的是旧版内联路径；v1.1.0 的 headless brief E2E 验证了新的 `references/` 读取，但完整 save/load/change E2E 仍是 rc.1 记录；模板读取仍未重新 E2E。若失败，按 harness 给出的 Skill base directory 解析。
 - 文档长度：初始 draft 不设硬性限制；后续观察到 `brief`/`load` 上下文成本过高，现已改为按需读取 + 软性预算（任务文档建议 ≤ 200 行 / ≤ 4k tokens；`SKILL.md` ≤ 12KB）。该预算不改变任务语义，只限制默认读取范围。
-- 固定 token 阈值：本 draft 不采用；60% 仅作个人提醒。
+- 固定 token 阈值：本版本不采用；60% 仅作个人提醒。
 - archive/restore 仍是指令型操作，尚未脚本化；记录组规则已写明，但文件移动与入口更新的真实失败行为需在端到端验收中确认。
 
 ## 测试声明
 
-当前完成设计评审、结构/静态检查、脚本 fixture 测试、最小 Claude Code E2E（save → load → 改代码 → load 检出变化），以及受控夹具验收（无 ID load 矩阵、多轮交接、A/B 隔离、archive/restore、1.0 风格迁移）；结果见 `VALIDATION.md`、`FIXTURE_TEST_RESULTS.md`、`E2E_TEST_RESULTS.md`。受控夹具验收不是真实业务项目试用；真实业务项目、真实 1.0.0 制品、并发/真实权限模式与完整 70 项 checklist 尚未执行，不能把已有结果当作完整端到端通过。
+当前完成设计评审、结构/静态检查、脚本 fixture 测试（29/29）、v1.1.0 headless brief E2E（临时项目，读取约 0.7k tokens，未读完整任务正文），以及 rc.1 时期的受控夹具验收（无 ID load 矩阵、多轮交接、A/B 隔离、archive/restore、1.0 风格迁移）；结果见 `VALIDATION.md`、`FIXTURE_TEST_RESULTS.md`、`E2E_TEST_RESULTS.md`。`E2E_TEST_RESULTS.md` 仍是 rc.1 记录；v1.1.0 的完整 save/load/change E2E 尚未重跑。受控夹具验收不是真实业务项目试用；真实业务项目、真实 1.0.0 制品、并发/真实权限模式与完整 95 项 checklist 尚未执行，不能把已有结果当作完整端到端通过。
 
 - `SHA256SUMS.txt` 只证明列入清单的文件与对应摘要一致，不证明逻辑正确、安装成功、权限安全或真实行为。
 - 截断标记检查是启发式，不等于自然语言绝无残句；聊天输出可能被截断，以磁盘文件和真实调用结果为准。
