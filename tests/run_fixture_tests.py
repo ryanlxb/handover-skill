@@ -273,11 +273,25 @@ def case_partial_without_change() -> None:
 
 def case_no_git() -> None:
     root = make_root(with_git=False)
-    snap, sha, _ = fingerprint(root, ["src/login.ts"])
+    snap, sha, fp_out = fingerprint(root, ["src/login.ts"])
+    sidecar = json.loads(
+        (root / ".handover" / "login.fingerprint.json").read_text(encoding="utf-8")
+    )
+    overall_ok = (
+        sidecar.get("overall") == "partial"
+        and sidecar.get("git", {}).get("available") is False
+    )
     bind_task(root, snap, sha)
     code, out, err = check(root, sha)
-    record("非 git 项目，无 git 基线", "unknown, exit 2", code, out, err,
-           code == 2 and "consistency: unknown" in out)
+    ok = code == 2 and "consistency: unknown" in out and overall_ok
+    record(
+        "非 git 项目：overall=partial、check unknown",
+        "partial; unknown exit 2",
+        code,
+        out + "\n---\n" + fp_out,
+        err,
+        ok,
+    )
 
 
 def case_sidecar_sha_mismatch() -> None:

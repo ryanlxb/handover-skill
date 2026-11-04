@@ -1,6 +1,6 @@
 # v1.1.2 Fixture Test Results
 
-- Date (UTC): 2026-11-04T01:34:09+00:00
+- Date (UTC): 2026-11-04T02:55:16+00:00
 - Script: `handover/scripts/handover.py`
 - Scope: fixture-level script tests only; no Claude Code skill execution.
 - Cases: 82, passed: 82, failed: 0
@@ -17,7 +17,7 @@
 | 8 | HEAD 变化，声明文件内容相同 | changed, git_changed | consistency: changed | PASS |
 | 9 | 部分基线不可检查 + 已知内容变化 | changed, incomplete: true | consistency: changed | PASS |
 | 10 | 部分基线不可检查 + 无明确变化 | unknown, exit 2 | consistency: unknown | PASS |
-| 11 | 非 git 项目，无 git 基线 | unknown, exit 2 | consistency: unknown | PASS |
+| 11 | 非 git 项目：overall=partial、check unknown | partial; unknown exit 2 | consistency: unknown | PASS |
 | 12 | 任务 fingerprint_sha256 与 sidecar 不一致 | unknown, exit 2 | consistency: unknown | PASS |
 | 13 | 排除 .claude/ 与 .git/ | skipped_excluded; sidecar only src/login.ts | exit 0 | PASS |
 | 14 | list 读取 frontmatter title | title column contains Login task | exit 0 | PASS |

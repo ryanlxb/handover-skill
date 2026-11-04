@@ -24,7 +24,9 @@
 - Fixture suite: 82/82 PASS (27 new cases covering the v1.1.2 fixes and the two documented scope boundaries).
 - `SHA256SUMS.txt`: 15/15 OK.
 - Headless v1.1.2 E2E: PASS in temporary git projects. The main matrix used a project-local copy renamed to `handover-v112` to avoid a global v1.1.1 shadow; after the matrix, the global v1.1.1 copy was backed up and replaced with v1.1.2, and the exact `/handover` chain was re-checked in a new project with no project-level skill. Covered: new save → fresh load (read-only) → modify → load (`changed`) → save (new baseline, `matched`); completed-task guard; legacy migration branch; archive/restore record-group move with baseline preserved; `list --all`; `brief`; `--out` refusal; `analysis` content probe. Details in `handover/E2E_TEST_RESULTS.md`.
-- Not covered: real business project, actual 1.0.0 artifact, concurrency, interactive permission modes, archive/restore failure injection, and the full 122-item checklist.
+- Focused acceptance (2026-11-04): PASS under Python 3.9 (static + 82/82 fixtures); non-git save/load (`overall: partial`, `check: unknown`, read-only load); helper-missing save/load (null binding fields, no sidecar, `unknown`); restore/archive target conflicts and missing-sidecar archive (no source loss); brief/load read budgets (3 files / ~0.6k and 5 files / ~1.6k tokens).
+- `fingerprint` now reports `overall: partial` when the git baseline is unavailable; a non-git project no longer looks fully complete. `check` remains `unknown` in that case.
+- Not covered: real business project, actual 1.0.0 artifact, concurrency, interactive permission modes, archive/restore entry-update failure injection, and the full 122-item checklist.
 
 ## Scope and limitations
 
@@ -39,8 +41,8 @@
 | File | SHA-256 |
 |---|---|
 | `handover/SKILL.md` | `46f80c24288d54977bd1dd2a4ad5b4c98a1b909d7fc73299aa59c133e252c96e` |
-| `handover/scripts/handover.py` | `dff71bddeb79ca28cb3696092de94996808fd935ca94b3e4b7b4f62b0b0e663d` |
-| `handover/README.md` | `2dae4a15f17f55ba8ce418db9e68e9d5f28677de2d08d293d9c46e6c6e707700` |
+| `handover/scripts/handover.py` | `87782b159255f49b2cc9ac4d977177a89e8d89cff5700467e7663ab92237fb47` |
+| `handover/README.md` | `e82427e68b52b3691ebea3775ffc0681f478be84449a9497e386e2ea3e1e9019` |
 | `handover/CHECKLIST.md` | `e295f4f8fa561fb4e473bbb80bc81af64d08f15bc8f7690f3dbeb1e4033021f5` |
 
 The full package manifest is `handover/SHA256SUMS.txt`.

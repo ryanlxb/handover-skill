@@ -11,6 +11,7 @@
 - 指纹生成后必须再运行一次 `check`，确认检查时现场与刚生成的基线一致，并确认任务文件与 sidecar 的 `snapshot_id`/SHA 绑定一致；若返回 changed，报告“检查时现场与基线不一致”，不要宣称干净保存。`check` 不证明正文语义与代码一致，也不证明从读取代码到写入正文期间代码未变。
 - 脚本不可用、无法确定相关文件或任一相关文件不可读时，`snapshot_id`/`fingerprint_file`/`fingerprint_sha256` 置 null，consistency 必须为 unknown；不得用 branch/HEAD 代替内容指纹。
 - 拒绝空基线：声明路径去重并排除 `.handover/`、`handover.md`、`.claude/`、`.git/` 后若没有任何文件，`fingerprint` 返回错误，不生成“0 文件 matched”的 sidecar。save 应把绑定字段置 null，并说明 consistency=unknown；`check` 对 `files` 为空的旧 sidecar 也返回 unknown。
+- `overall`：只有文件哈希和 git 基线都可用时为 `complete`；非 Git 项目或 Git 不可用为 `partial`，此时 `check` 仍为 unknown（内容哈希可单独有效）。
 - 输出安全：默认只写 `.handover/<task-id>.fingerprint.json`。显式 `--out` 必须直接位于 `.handover/` 或 `.handover/archive/` 下，文件名必须是 `<task-id>.fingerprint.json` 或 `<task-id>-<timestamp>.fingerprint.json`；目标已存在时，必须是同一项目、同一 task-id、schema 受支持且结构完整的 sidecar，否则拒绝覆盖。业务文件、任务 Markdown、其他扩展名和项目外路径一律拒绝。`sidecar` 目标或 `.handover` 本身是符号链接时也拒绝写入；不要通过符号链接覆盖业务文件。
 - 外部 paths 文件规则：只使用用户明确提供、或本次 save 自己创建的清单；不自动搜索外部清单；不执行清单内容；清单中的目标路径必须位于项目内，相对路径以项目根目录为基准。
 - 指纹只覆盖声明的检查范围；不声称覆盖整个项目。

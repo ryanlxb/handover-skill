@@ -11,10 +11,13 @@ fingerprint --root ROOT --task TASK --paths PATHS [--out OUT]
             [--snapshot-id ID] [--scope-dir DIR ...] [--max-bytes N]
     Hash the listed files and the relevant git state, then write
     .handover/<task>.fingerprint.json. Prints the snapshot id and sidecar
-    SHA-256 for the task frontmatter. A custom --out must be directly under
-    .handover/ or .handover/archive/, use a <task>[-<timestamp>].fingerprint.json
-    name, and may only overwrite an existing sidecar for the same task and
-    project; ordinary business files and task Markdown are never overwritten.
+    SHA-256 for the task frontmatter. `overall` is `complete` only when the
+    file hashes and the git baseline are both available; a non-git project or
+    a git failure is `partial` (and `check` reports unknown). A custom --out
+    must be directly under .handover/ or .handover/archive/, use a
+    <task>[-<timestamp>].fingerprint.json name, and may only overwrite an
+    existing sidecar for the same task and project; ordinary business files
+    and task Markdown are never overwritten.
 
 check --root ROOT --task TASK [--task-file FILE] [--sidecar SIDECAR]
       [--expected-sha256 HASH] [--expected-snapshot-id ID]
@@ -807,7 +810,7 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
         "max_file_bytes": args.max_bytes,
         "files": files,
         "git": git_info,
-        "overall": "complete" if issues == 0 else "partial",
+        "overall": "complete" if issues == 0 and git_info.get("available") else "partial",
         "skipped_excluded": skipped,
     }
     handover_dir = root / ".handover"

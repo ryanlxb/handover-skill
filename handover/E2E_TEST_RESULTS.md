@@ -45,12 +45,28 @@
 - `analysis` was probed with a synthetic transcript containing system and tool markers; the JSON output contained neither marker and no `head` field.
 - After replacing the global v1.1.1 copy with v1.1.2, the exact `/handover` name was run in a new project with no project-level skill: new save, fresh read-only load with unchanged task/sidecar hashes, `changed` after modifying `src/login.ts`, and a second save whose independent `check` matched. The previous global copy was backed up outside the skill directory.
 
+### Focused acceptance (2026-11-04)
+
+This batch targets the three product goals: simple, efficient, and content-preserving.
+
+| Check | Expected | Observed | Result |
+|---|---|---|---|
+| Python 3.9 static + fixture | Same results as the supported runtime | Static checks PASS; fixture 82/82 PASS under Python 3.9.13 | PASS |
+| Non-git project save/load | Save works; no fake `matched`; load read-only | Task, sidecar, and entry written; sidecar `overall: partial`, `git_available: false`; `check` unknown exit 2; load hashes unchanged | PASS |
+| Helper missing (`scripts/` removed) | Task still saved; binding fields null; no fake consistency | Task and entry written; no sidecar; `snapshot_id`/`fingerprint_*` null; `consistency: unknown`; load read-only | PASS |
+| Restore conflict (current task exists) | Stop without overwriting or deleting the archive source | Stopped with no writes; task, sidecar, archived task, and archived sidecar hashes unchanged | PASS |
+| Archive target blocked by a regular file | Stop without deleting the source | Stopped; source task, sidecar, and blocking file hashes unchanged | PASS |
+| Archive with missing sidecar | Archive task only; null binding fields; no new baseline | Task archived; `fingerprint_file`/`fingerprint_sha256` null; no sidecar generated; unknown reported | PASS |
+| Efficiency | brief ≤4k, load ≤6k, brief skips the task body | brief: 3 files / ~0.6k tokens, body skipped; load: 5 files / ~1.6k tokens; task file 103 lines / 5.1 KB | PASS |
+
+The non-git, failure-injection, and efficiency checks used the exact `/handover` command against the global v1.1.2 install. The helper-missing check used a project-local renamed copy with `scripts/` removed. After the `overall` clarification, a non-git fingerprint reports `partial` rather than `complete`; `check` still reports `unknown` because the git baseline is unavailable.
+
 ### Limitations
 
 - One Claude Code version, one model/gateway. Results are behavioral evidence for this environment, not a cross-model guarantee.
 - The main matrix used a renamed project-local copy; the exact `/handover` chain was re-checked only after replacing the global v1.1.1 copy with v1.1.2. A release install on another machine still needs its own global/project-scope check.
 - `analysis` leak testing used a synthetic transcript; live transcripts were not inspected for content.
-- Not covered: real business project, actual 1.0.0 artifact, concurrency, interactive permission modes, archive/restore failure injection, and the full `CHECKLIST.md`.
+- Non-git projects, missing helper scripts, restore/archive target conflicts, and missing sidecars are covered above. Not covered: real business project, actual 1.0.0 artifact, concurrency, interactive permission modes, archive/restore entry-update failure injection, and the full `CHECKLIST.md`.
 - The migrated legacy task remains `status: unknown` by design; completing it requires a user-confirmed status before the next save.
 
 ---
