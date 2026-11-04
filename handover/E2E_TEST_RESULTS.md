@@ -5,13 +5,13 @@
 
 ## v1.1.2 headless E2E
 
-- Date: 2026-11-03
+- Date: 2026-11-03 (matrix); 2026-11-04 (exact `/handover` re-check)
 - Version: v1.1.2
 - Claude Code: 2.1.300
 - Model gateway: custom gateway (name withheld); the harness printed `unrecognized_model` at startup and execution continued.
-- Isolation: installed as a project-local copy renamed to `handover-v112`, so the globally installed v1.1.1 `handover` skill could not shadow it. The skill content, references, and scripts under test are v1.1.2; only the frontmatter `name` and invocation name were changed.
+- Isolation: the main matrix used a project-local copy renamed to `handover-v112`, so the globally installed v1.1.1 `handover` skill could not shadow it. The skill content, references, and scripts under test are v1.1.2; only the frontmatter `name` and invocation name were changed. After the matrix, the global v1.1.1 copy was backed up and replaced with v1.1.2, and the exact `/handover` name was re-checked in a new temporary project with no project-level skill.
 - Invocation: `claude -p "<slash command>" --permission-mode dontAsk --allowedTools "Read Write Edit Glob Grep Bash" --max-turns <n> --no-session-persistence`
-- Scope: real Claude Code skill invocation in one temporary git project. This is not a real business project and not a multi-model or multi-permission-mode matrix.
+- Scope: real Claude Code skill invocation in temporary git projects. This is not a real business project and not a multi-model or multi-permission-mode matrix.
 
 ### Results
 
@@ -30,6 +30,7 @@
 | `fingerprint --out` business file | Exit 2; file unchanged | Exit 2 with path restriction; business file unchanged | PASS |
 | `fingerprint --out` task Markdown | Exit 2; task unchanged | Exit 2 with filename restriction; task unchanged | PASS |
 | `analysis --json` content probe | No system/tool text; no `head` field | Synthetic transcript markers absent; no `head` field | PASS |
+| Exact `/handover` after global v1.1.2 install | Save → fresh load (read-only) → modify → load (`changed`) → save (`matched`) | All steps passed in a new temporary project with no project-level skill; task/sidecar hashes unchanged across `load`; independent `check` matched | PASS |
 
 ### Detailed observations
 
@@ -42,11 +43,12 @@
 - Archive/restore preserved `fingerprint_sha256` and `updated_at`; the sidecar moved with the task and `fingerprint_file` was rewritten to the new location.
 - The first `brief` run read 60 lines of the task file, above the ≤40-line summary budget in `brief-load.md`. The reference was tightened to stop at the next `##` heading and to read only frontmatter for unrecognised records; a re-run read `demo.md:1-30` and `legacy.md:1-15` (~1.2k tokens) and skipped the task body.
 - `analysis` was probed with a synthetic transcript containing system and tool markers; the JSON output contained neither marker and no `head` field.
+- After replacing the global v1.1.1 copy with v1.1.2, the exact `/handover` name was run in a new project with no project-level skill: new save, fresh read-only load with unchanged task/sidecar hashes, `changed` after modifying `src/login.ts`, and a second save whose independent `check` matched. The previous global copy was backed up outside the skill directory.
 
 ### Limitations
 
-- One Claude Code version, one model/gateway, one temporary git project. Results are behavioral evidence for this environment, not a cross-model guarantee.
-- The E2E used a renamed project-local copy; the exact `/handover` name was not exercised while a global v1.1.1 copy was installed. For a release install, replace or remove the global copy and repeat the minimal chain.
+- One Claude Code version, one model/gateway. Results are behavioral evidence for this environment, not a cross-model guarantee.
+- The main matrix used a renamed project-local copy; the exact `/handover` chain was re-checked only after replacing the global v1.1.1 copy with v1.1.2. A release install on another machine still needs its own global/project-scope check.
 - `analysis` leak testing used a synthetic transcript; live transcripts were not inspected for content.
 - Not covered: real business project, actual 1.0.0 artifact, concurrency, interactive permission modes, archive/restore failure injection, and the full `CHECKLIST.md`.
 - The migrated legacy task remains `status: unknown` by design; completing it requires a user-confirmed status before the next save.

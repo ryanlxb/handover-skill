@@ -23,14 +23,14 @@
 - Static validator: PASS.
 - Fixture suite: 82/82 PASS (27 new cases covering the v1.1.2 fixes and the two documented scope boundaries).
 - `SHA256SUMS.txt`: 15/15 OK.
-- Headless v1.1.2 E2E: PASS in one temporary git project (project-local copy renamed to `handover-v112` to avoid a global v1.1.1 shadow). Covered: new save → fresh load (read-only) → modify → load (`changed`) → save (new baseline, `matched`); completed-task guard; legacy migration branch; archive/restore record-group move with baseline preserved; `list --all`; `brief`; `--out` refusal; `analysis` content probe. Details in `handover/E2E_TEST_RESULTS.md`.
+- Headless v1.1.2 E2E: PASS in temporary git projects. The main matrix used a project-local copy renamed to `handover-v112` to avoid a global v1.1.1 shadow; after the matrix, the global v1.1.1 copy was backed up and replaced with v1.1.2, and the exact `/handover` chain was re-checked in a new project with no project-level skill. Covered: new save → fresh load (read-only) → modify → load (`changed`) → save (new baseline, `matched`); completed-task guard; legacy migration branch; archive/restore record-group move with baseline preserved; `list --all`; `brief`; `--out` refusal; `analysis` content probe. Details in `handover/E2E_TEST_RESULTS.md`.
 - Not covered: real business project, actual 1.0.0 artifact, concurrency, interactive permission modes, archive/restore failure injection, and the full 122-item checklist.
 
 ## Scope and limitations
 
 - `check` still covers only declared content hashes plus git status for declared directories. A same-directory file not listed in `files`, whose content changes without changing its git status, can remain `matched`.
 - `check` does not hash the task body; editing only the body while keeping frontmatter and the sidecar unchanged can remain `matched`.
-- The v1.1.2 E2E is one Claude Code version/model/gateway and one temporary project; it is not a cross-model or cross-permission-mode guarantee. The exact `/handover` name was not exercised while the global v1.1.1 copy was installed.
+- The v1.1.2 E2E is one Claude Code version/model/gateway; it is not a cross-model or cross-permission-mode guarantee. The exact `/handover` chain was re-checked after replacing the global v1.1.1 copy with v1.1.2; the previous global copy was backed up outside the skill directory.
 - Real business-project trial, real 1.0.0 artifact migration, concurrency, archive/restore failure paths, and normal interactive permission modes remain unvalidated.
 - No full code audit or security guarantee. Checksums verify content consistency; static checks verify only their listed rules; fixtures and E2E evidence have separate bounded scopes.
 
@@ -40,7 +40,7 @@
 |---|---|
 | `handover/SKILL.md` | `46f80c24288d54977bd1dd2a4ad5b4c98a1b909d7fc73299aa59c133e252c96e` |
 | `handover/scripts/handover.py` | `dff71bddeb79ca28cb3696092de94996808fd935ca94b3e4b7b4f62b0b0e663d` |
-| `handover/README.md` | `df8e9f6c6bf7f98838fda275ed20e891f92cb4d1de40726c4c04d72a6fc74d09` |
+| `handover/README.md` | `2dae4a15f17f55ba8ce418db9e68e9d5f28677de2d08d293d9c46e6c6e707700` |
 | `handover/CHECKLIST.md` | `e295f4f8fa561fb4e473bbb80bc81af64d08f15bc8f7690f3dbeb1e4033021f5` |
 
 The full package manifest is `handover/SHA256SUMS.txt`.

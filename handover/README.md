@@ -288,7 +288,7 @@ stale_after_days: 14
 
 ## 测试声明
 
-当前完成设计评审、结构/静态检查、脚本 fixture 测试（v1.1.2：82/82）、v1.1.0 headless brief E2E（临时项目，读取约 0.7k tokens，未读完整任务正文）、v1.1.1 headless save/load 与 status-selection 冒烟、v1.1.2 headless E2E（临时 git 项目；项目级副本改名为 `handover-v112`，避免全局 v1.1.1 遮蔽；save → 新会话 load（只读、哈希不变）→ 修改 → load（changed）→ save（新基线 matched）；completed 保护、legacy 迁移分支、archive/restore、list、brief、`--out` 与 `analysis` 探针均通过），以及 rc.1 时期的受控夹具验收（无 ID load 矩阵、多轮交接、A/B 隔离、archive/restore、1.0 风格迁移）；结果见 `VALIDATION.md`、`FIXTURE_TEST_RESULTS.md`、`E2E_TEST_RESULTS.md`。v1.1.2 E2E 只覆盖一个环境与一次临时项目；全局 v1.1.1 存在时未直接验证 exact `/handover` 名称；真实业务项目、真实 1.0.0 制品、并发/真实权限模式、archive/restore 失败注入与完整 122 项 checklist 尚未执行，不能把已有结果当作完整端到端通过。
+当前完成设计评审、结构/静态检查、脚本 fixture 测试（v1.1.2：82/82）、v1.1.0 headless brief E2E（临时项目，读取约 0.7k tokens，未读完整任务正文）、v1.1.1 headless save/load 与 status-selection 冒烟、v1.1.2 headless E2E（主体矩阵在临时 git 项目中使用改名副本 `handover-v112`；随后备份并替换全局 v1.1.1 为 v1.1.2，在无项目级 skill 的新临时项目复验 exact `/handover`：save → 新会话 load（只读、哈希不变）→ 修改 → load（changed）→ save（新基线 matched）；completed 保护、legacy 迁移分支、archive/restore、list、brief、`--out` 与 `analysis` 探针均通过），以及 rc.1 时期的受控夹具验收（无 ID load 矩阵、多轮交接、A/B 隔离、archive/restore、1.0 风格迁移）；结果见 `VALIDATION.md`、`FIXTURE_TEST_RESULTS.md`、`E2E_TEST_RESULTS.md`。v1.1.2 E2E 只覆盖一个环境与两个临时项目；真实业务项目、真实 1.0.0 制品、并发/真实权限模式、archive/restore 失败注入与完整 122 项 checklist 尚未执行，不能把已有结果当作完整端到端通过。
 
 - `SHA256SUMS.txt` 只证明列入清单的文件与对应摘要一致，不证明逻辑正确、安装成功、权限安全或真实行为。
 - 截断标记检查是启发式，不等于自然语言绝无残句；聊天输出可能被截断，以磁盘文件和真实调用结果为准。

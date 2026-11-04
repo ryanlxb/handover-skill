@@ -50,13 +50,14 @@
 | Structural/static (`VALIDATION.md`) | PASS; no errors |
 | Script fixture (`FIXTURE_TEST_RESULTS.md`) | 82/82 PASS |
 | v1.1.2 headless E2E (`E2E_TEST_RESULTS.md`) | PASS: save → fresh load (read-only) → modify → load (`changed`) → save (`matched`); completed guard; legacy migration branch; archive/restore; list; brief; `--out` and `analysis` probes |
+| v1.1.2 exact `/handover` install | PASS: global v1.1.1 backed up and replaced with v1.1.2; the same chain passed in a new project with no project-level skill |
 | v1.1.1 headless save/load smoke | PASS: save/load/list exit 0; load read-only ~3k tokens; `changed` only for untracked harness files created after save; kept as historical evidence |
 | v1.1.1 status-selection smoke | PASS: continuing a completed task created new `in-progress` `project-init-wrapup`; existing completed tasks unchanged; kept as historical evidence |
 | Real Claude Code E2E (rc.1 minimal chain) | PASS after a scope fix; not rerun for v1.1.1 |
 | Controlled fixture acceptance (rc.1) | PASS for no-ID load, multi-turn, A/B isolation, archive/restore, 1.0-style migration; not rerun for v1.1.1 |
 | Real business project, real 1.0.0 artifact, concurrency/real permission modes, full 122-item checklist | Not executed |
 
-The v1.1.2 headless E2E reran the save → load → change → load → save chain and the bounded cases above in one temporary git project. It used a project-local copy renamed to `handover-v112` so the globally installed v1.1.1 `handover` could not shadow it; the exact `/handover` name was not exercised while the global copy was installed. `E2E_TEST_RESULTS.md` now contains the v1.1.2 record plus the historical rc.1 record. Real business projects, actual 1.0.0 artifacts, concurrency, interactive permission modes, archive/restore failure injection, and the full 122-item checklist remain untested.
+The v1.1.2 headless E2E reran the save → load → change → load → save chain and the bounded cases above in temporary git projects. The main matrix used a project-local copy renamed to `handover-v112`; after the matrix, the global v1.1.1 copy was backed up and replaced with v1.1.2, and the exact `/handover` chain was re-run in a new project with no project-level skill and passed. `E2E_TEST_RESULTS.md` now contains the v1.1.2 record plus the historical rc.1 record. Real business projects, actual 1.0.0 artifacts, concurrency, interactive permission modes, archive/restore failure injection, and the full 122-item checklist remain untested.
 
 ### Status-selection manual E2E (global v1.1.0)
 
