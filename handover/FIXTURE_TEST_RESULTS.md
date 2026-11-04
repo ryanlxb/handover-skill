@@ -1,6 +1,6 @@
 # v1.1.2 Fixture Test Results
 
-- Date (UTC): 2026-11-04T02:55:16+00:00
+- Date (UTC): 2026-11-04T03:11:43+00:00
 - Script: `handover/scripts/handover.py`
 - Scope: fixture-level script tests only; no Claude Code skill execution.
 - Cases: 82, passed: 82, failed: 0

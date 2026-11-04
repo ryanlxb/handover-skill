@@ -57,6 +57,7 @@ This batch targets the three product goals: simple, efficient, and content-prese
 | Restore conflict (current task exists) | Stop without overwriting or deleting the archive source | Stopped with no writes; task, sidecar, archived task, and archived sidecar hashes unchanged | PASS |
 | Archive target blocked by a regular file | Stop without deleting the source | Stopped; source task, sidecar, and blocking file hashes unchanged | PASS |
 | Archive with missing sidecar | Archive task only; null binding fields; no new baseline | Task archived; `fingerprint_file`/`fingerprint_sha256` null; no sidecar generated; unknown reported | PASS |
+| Archive entry-update failure | Move the record group; report incomplete; do not delete unknown entry content | Group moved and paired; `fingerprint_sha256` matched the archived sidecar; body byte-identical; the `handover.md` directory and its sentinel were untouched; the report explicitly said incomplete | PASS |
 | Efficiency | brief ≤4k, load ≤6k, brief skips the task body | brief: 3 files / ~0.6k tokens, body skipped; load: 5 files / ~1.6k tokens; task file 103 lines / 5.1 KB | PASS |
 
 The non-git, failure-injection, and efficiency checks used the exact `/handover` command against the global v1.1.2 install. The helper-missing check used a project-local renamed copy with `scripts/` removed. After the `overall` clarification, a non-git fingerprint reports `partial` rather than `complete`; `check` still reports `unknown` because the git baseline is unavailable.
@@ -66,7 +67,7 @@ The non-git, failure-injection, and efficiency checks used the exact `/handover`
 - One Claude Code version, one model/gateway. Results are behavioral evidence for this environment, not a cross-model guarantee.
 - The main matrix used a renamed project-local copy; the exact `/handover` chain was re-checked only after replacing the global v1.1.1 copy with v1.1.2. A release install on another machine still needs its own global/project-scope check.
 - `analysis` leak testing used a synthetic transcript; live transcripts were not inspected for content.
-- Non-git projects, missing helper scripts, restore/archive target conflicts, and missing sidecars are covered above. Not covered: real business project, actual 1.0.0 artifact, concurrency, interactive permission modes, archive/restore entry-update failure injection, and the full `CHECKLIST.md`.
+- Non-git projects, missing helper scripts, restore/archive target conflicts, missing sidecars, and archive entry-update failure are covered above. Not covered: real business project, actual 1.0.0 artifact, concurrency, interactive permission modes, other archive/restore failure modes (for example a cross-device move), and the full `CHECKLIST.md`.
 - The migrated legacy task remains `status: unknown` by design; completing it requires a user-confirmed status before the next save.
 
 ---
