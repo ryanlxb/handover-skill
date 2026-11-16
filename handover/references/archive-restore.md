@@ -22,7 +22,7 @@
 1. 指定 task-id；默认只允许 completed/cancelled。stale 的活跃任务只提示复核，不自动归档。用户明确要求归档其他状态时，必须在归档记录中写明原因；仍不自动执行。
 2. 识别记录组：任务 Markdown + 可选 fingerprint sidecar。sidecar 存在时，先核对 sidecar 的 `snapshot_id` 与任务 frontmatter 一致；不一致则停止并报告，不把两组不同次保存的文件一起归档。
 3. 移动前校验源文件存在、目标文件不存在；移动后回读。目标同名不覆盖；冲突停止并报告。
-4. 归档文件移到 `.handover/archive/<task-id>-<小写 UTC 时间戳>.md`；sidecar 同步移到同 stem 的 `.fingerprint.json`，并把归档任务 frontmatter 的 `fingerprint_file` 指向归档 sidecar；`fingerprint_sha256` 保持不变，不重新生成基线。
+4. 归档文件移到 `.handover/archive/<task-id>-<小写 UTC 时间戳>.md`；sidecar 同步移到同 stem 的 `.fingerprint.json`，并把归档任务 frontmatter 的 `fingerprint_file` 指向归档 sidecar；`fingerprint_sha256`、`body_sha256`、`goal_sha256` 保持不变，不重新生成基线。
 5. 若 sidecar 缺失：只归档任务 Markdown，`fingerprint_file`/`fingerprint_sha256` 置 null，并在报告中说明 consistency 将为 unknown。
 6. 若任务或 sidecar 只有一个移动成功：报告两者实际位置、已完成步骤和不完整状态；任务文件是事实来源，不删除任务文件，不宣称全部成功。
 7. 归档任务 frontmatter 增加 `archived_at`；归档不改变 `updated_at`。保留原 task-id、最后实质更新时间和归档时间。

@@ -28,6 +28,8 @@ REQUIRED = [
     "references/data-model.md",
     "references/fingerprint.md",
     "references/analysis.md",
+    "references/token-hygiene.md",
+    "references/entry-template.md",
     "CHECKLIST.md",
     "SOURCES.md",
     "scripts/handover.py",
@@ -43,6 +45,8 @@ SIZE_BUDGETS = {
     "references/fingerprint.md": 8000,
     "references/analysis.md": 10000,
     "references/task-template.md": 8000,
+    "references/token-hygiene.md": 4000,
+    "references/entry-template.md": 4000,
 }
 
 REFERENCE_LINKS = [
@@ -52,6 +56,8 @@ REFERENCE_LINKS = [
     "references/data-model.md",
     "references/fingerprint.md",
     "references/analysis.md",
+    "references/token-hygiene.md",
+    "references/entry-template.md",
 ]
 
 SKILL_KEYS = ["name", "description", "argument-hint", "disable-model-invocation"]
@@ -73,6 +79,8 @@ TEMPLATE_KEYS = [
     "fingerprint_sha256",
     "fingerprint_scope",
     "fingerprint_checked_at",
+    "body_sha256",
+    "goal_sha256",
 ]
 
 TRUNCATION_PATTERNS = [
@@ -113,9 +121,23 @@ def check_fences(text: str) -> Tuple[bool, int]:
     return count % 2 == 0, count
 
 
+def strip_fenced_code(text: str) -> str:
+    """Remove fenced code blocks so example links are not validated."""
+    kept: List[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            kept.append(line)
+    return "\n".join(kept)
+
+
 def check_links(path: Path, text: str) -> List[str]:
     errors: List[str] = []
-    for target in LINK_RE.findall(text):
+    for target in LINK_RE.findall(strip_fenced_code(text)):
         target = target.strip()
         if not target:
             continue
@@ -220,7 +242,7 @@ def main() -> int:
                 warnings.append("README.md: does not reference E2E_TEST_RESULTS.md")
         files_report.append((rel, lines, size, "OK" if ok_fences else "FENCE-ERROR"))
 
-    print("# v1.1.2 Validation Report")
+    print("# v1.2.0 Validation Report")
     print("")
     print("- Date (UTC): %s" % datetime.now(timezone.utc).isoformat(timespec="seconds"))
     print("- Target: `%s`" % target_arg)

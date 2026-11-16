@@ -40,9 +40,34 @@ status-guard --root ROOT --task TASK [--task-file FILE] [--reopen-authorised]
     The guard checks task_id, schema, project_root, and status; it is not a
     write lock and does not validate the task body.
 
+task-lint --root ROOT --task TASK [--task-file FILE] [--require-seal]
+          [--require-project-context] [--max-tokens N] [--json]
+    Read-only validation of a generated task document: required
+    frontmatter keys, status, project root, required sections, the minimum
+    handover contract (当前阶段/验收/进度状态/下一步动作), project context,
+    body/goal hashes, duplicate sections, and token budget.
+    Exit 0 = valid; 1 = quality error; 2 = unreadable/parse/path error.
+
+seal --root ROOT --task TASK [--task-file FILE] [--require-project-context]
+     [--max-tokens N]
+    Validate the task, then write body_sha256 and goal_sha256 into the
+    frontmatter. Does not change the body, status, updated_at, or snapshot
+    binding. Exit 1 = validation error; 2 = unreadable/parse/path error.
+
+goal-guard --root ROOT --task TASK --old-file OLD --new-file NEW
+           [--goal-change-authorised]
+    Compare the normalised `## 目标与边界` section of an existing and a
+    proposed task. Exit 0 = unchanged or explicitly authorised; 1 = goal
+    changed without authorisation; 2 = unknown/error.
+
 ignore-check --root ROOT
     Check whether .handover/ and handover.md are both ignored by Git and not
     tracked. Exit 0 = ok or not a git work tree; 1 = warning; 2 = unknown.
+
+entry-lint --root ROOT [--json]
+    Check handover.md task links: dead links, duplicate links, links that
+    resolve outside the project, and task files missing from the entry.
+    Exit 0 = ok; 1 = entry errors; 2 = entry missing/unreadable.
 
 stats --root ROOT --task TASK [--task-file FILE] [--json]
     Estimate the token distribution of a task document: frontmatter and each
@@ -79,18 +104,66 @@ SCHEMA = 1
 DEFAULT_STALE_DAYS = 14
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 DEFAULT_CONTEXT_WINDOW = 1000000
+DEFAULT_SCOPE_ROOT_MODE = "declared"
+DEFAULT_TASK_MAX_TOKENS = 6000
+TASK_SOFT_TOKEN_BUDGET = 4000
 CLAUDE_HOME = Path.home() / ".claude"
 TASK_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 SNAPSHOT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SIDECAR_SUFFIX = ".fingerprint.json"
+ENTRY_LINK_RE = re.compile(r"^\s*-\s+\[([^\]]+)\]\(([^)]+)\)")
 KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 POSITIVE_INT_RE = re.compile(r"^[0-9]+$")
+HEX_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
 ACTIVE = {"in-progress", "pending", "blocked", "paused"}
 ENDED = {"completed", "cancelled"}
 KNOWN_STATUS = ACTIVE | ENDED | {"unknown"}
 RESERVED_TASK_IDS = {"save", "load", "brief", "list", "archive", "restore", "analysis"}
+SCOPE_ROOT_MODES = {"direct", "declared", "tracked"}
+REQUIRED_TASK_KEYS = [
+    "schema",
+    "snapshot_id",
+    "task_id",
+    "title",
+    "status",
+    "updated_at",
+    "migrated_at",
+    "archived_at",
+    "restored_at",
+    "project_root",
+    "branch",
+    "head",
+    "worktree",
+    "fingerprint_file",
+    "fingerprint_sha256",
+    "fingerprint_scope",
+    "fingerprint_checked_at",
+]
+REQUIRED_TASK_SECTIONS = [
+    "快速接手摘要",
+    "目标与边界",
+    "当前进度",
+    "下一步",
+    "接手必读",
+]
+SUMMARY_GOAL_RE = re.compile(r"目标|goal", re.IGNORECASE)
+SUMMARY_STAGE_RE = re.compile(r"当前|阶段|current|stage", re.IGNORECASE)
+ACCEPTANCE_RE = re.compile(r"验收|完成判定|acceptance|done when", re.IGNORECASE)
+PROGRESS_STATE_RE = re.compile(
+    r"已实现|已完成|进行中|未开始|待办|阻塞|等待|暂停|已验证|未验收|"
+    r"implemented|completed|in progress|pending|blocked|paused|verified|not verified",
+    re.IGNORECASE,
+)
+NEXT_ACTION_RE = re.compile(
+    r"运行|实现|修改|测试|验证|确认|评审|提交|推送|发布|部署|修复|清理|补充|"
+    r"开始|执行|授权|等待|review|run|test|implement|verify|fix|confirm|push|deploy|wait|start",
+    re.IGNORECASE,
+)
+PROJECT_CONTEXT_SECTION = "项目上下文"
+GOAL_SECTION = "目标与边界"
+STALE_SECTION = "未复核与陈旧标记"
 
 
 class FrontmatterError(ValueError):
@@ -349,32 +422,148 @@ def task_id_error(task: str) -> Optional[str]:
     return None
 
 
-def read_stale_days(root: Path) -> Tuple[int, Optional[str]]:
+def read_config(root: Path) -> Tuple[int, str, Optional[str]]:
+    """Read project config: (stale_after_days, scope_root_mode, warning)."""
     config = root / ".handover" / "config.yaml"
     if not within_root(root, config):
         return (
             DEFAULT_STALE_DAYS,
-            "config resolves outside project root; using default %d" % DEFAULT_STALE_DAYS,
+            DEFAULT_SCOPE_ROOT_MODE,
+            "config resolves outside project root; using defaults",
         )
     if not config.is_file():
-        return DEFAULT_STALE_DAYS, None
+        return DEFAULT_STALE_DAYS, DEFAULT_SCOPE_ROOT_MODE, None
     try:
         text = config.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        return DEFAULT_STALE_DAYS, "config_unreadable: %s" % exc
+        return DEFAULT_STALE_DAYS, DEFAULT_SCOPE_ROOT_MODE, "config_unreadable: %s" % exc
     try:
         data = parse_config_yaml(text)
     except FrontmatterError as exc:
         return (
             DEFAULT_STALE_DAYS,
-            "config_error: %s; using default %d" % (exc, DEFAULT_STALE_DAYS),
+            DEFAULT_SCOPE_ROOT_MODE,
+            "config_error: %s; using defaults" % exc,
         )
-    if not data or "stale_after_days" not in data:
-        return DEFAULT_STALE_DAYS, None
-    days = positive_int(data.get("stale_after_days"))
-    if days is not None:
-        return days, None
-    return DEFAULT_STALE_DAYS, "invalid stale_after_days; using default %d" % DEFAULT_STALE_DAYS
+    warnings: List[str] = []
+    days = DEFAULT_STALE_DAYS
+    if data and "stale_after_days" in data:
+        parsed_days = positive_int(data.get("stale_after_days"))
+        if parsed_days is None:
+            warnings.append(
+                "invalid stale_after_days; using default %d" % DEFAULT_STALE_DAYS
+            )
+        else:
+            days = parsed_days
+    mode = DEFAULT_SCOPE_ROOT_MODE
+    if data and "scope_root_mode" in data:
+        raw_mode = data.get("scope_root_mode")
+        if isinstance(raw_mode, str) and raw_mode.strip() in SCOPE_ROOT_MODES:
+            mode = raw_mode.strip()
+        else:
+            warnings.append(
+                "invalid scope_root_mode; using default %s" % DEFAULT_SCOPE_ROOT_MODE
+            )
+    return days, mode, "; ".join(warnings) if warnings else None
+
+
+def read_stale_days(root: Path) -> Tuple[int, Optional[str]]:
+    days, _, warning = read_config(root)
+    return days, warning
+
+
+def raw_task_path(root: Path, value: Optional[str], task: str) -> Path:
+    """Return the unresolved task path, relative to the project root."""
+    raw = value if value else str(Path(".handover") / (task + ".md"))
+    path = Path(raw)
+    if not path.is_absolute():
+        path = root / path
+    return path
+
+
+def resolve_task_file(root: Path, value: Optional[str], task: str) -> Path:
+    """Resolve a task path relative to the project root, not the current cwd."""
+    return raw_task_path(root, value, task).resolve()
+
+
+def split_frontmatter_body(text: str) -> Tuple[Optional[str], str]:
+    """Return (frontmatter_text, body_text); frontmatter_text is None if absent."""
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return None, text
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            return "".join(lines[1:index]), "".join(lines[index + 1 :])
+    return None, text
+
+
+def task_body_sha256(text: str) -> Optional[str]:
+    frontmatter, body = split_frontmatter_body(text)
+    if frontmatter is None:
+        return None
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def section_content(body: str, heading: str) -> Optional[str]:
+    """Return the content after a `## heading` line, or None when absent."""
+    for name, lines in split_sections(body.splitlines()):
+        if name == heading or name.startswith(heading):
+            content = lines[1:] if lines and lines[0].startswith("## ") else lines
+            return "\n".join(content)
+    return None
+
+
+def normalize_section_text(text: str) -> str:
+    lines = [line.rstrip() for line in text.splitlines()]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    normalized: List[str] = []
+    blank = False
+    for line in lines:
+        if not line.strip():
+            if not blank:
+                normalized.append("")
+            blank = True
+        else:
+            normalized.append(line)
+            blank = False
+    return "\n".join(normalized)
+
+
+def section_sha256(body: str, heading: str) -> Optional[str]:
+    content = section_content(body, heading)
+    if content is None:
+        return None
+    return hashlib.sha256(normalize_section_text(content).encode("utf-8")).hexdigest()
+
+
+def update_frontmatter_fields(text: str, fields: Dict[str, str]) -> str:
+    """Replace or append flat frontmatter fields, preserving the body."""
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        raise FrontmatterError("missing_frontmatter", "cannot update frontmatter")
+    end = None
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            end = index
+            break
+    if end is None:
+        raise FrontmatterError("unclosed_frontmatter", "cannot update frontmatter")
+    newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
+    frontmatter = lines[1:end]
+    for key, value in fields.items():
+        replacement = "%s: %s%s" % (key, value, newline)
+        replaced = False
+        for index, line in enumerate(frontmatter):
+            if line.split(":", 1)[0].strip() == key:
+                frontmatter[index] = replacement
+                replaced = True
+                break
+        if not replaced:
+            frontmatter.append(replacement)
+    return "".join([lines[0]] + frontmatter + lines[end:])
 
 
 def within_root(root: Path, path: Path) -> bool:
@@ -539,14 +728,14 @@ def entry_relevant(
     )
 
 
-def derive_scope_dirs(rels: List[str]) -> List[str]:
+def derive_scope_dirs(rels: List[str], include_root_dot: bool = True) -> List[str]:
     dirs = set()
     for rel in rels:
         parent = str(Path(rel).parent).replace("\\", "/")
         if parent and parent != ".":
             dirs.add(parent.rstrip("/") + "/")
-        else:
-            # Root-level files scope only their direct siblings, not the whole tree.
+        elif include_root_dot:
+            # direct mode: root-level files scope their direct siblings.
             dirs.add(".")
     return sorted(dirs)
 
@@ -563,10 +752,20 @@ def normalize_scope_dir(value: str) -> Optional[str]:
     return norm.rstrip("/") + "/"
 
 
-def git_snapshot(root: Path, scope_paths: List[str], scope_dirs: List[str]) -> Dict[str, Any]:
+def git_snapshot(
+    root: Path,
+    scope_paths: List[str],
+    scope_dirs: List[str],
+    scope_root_mode: str = DEFAULT_SCOPE_ROOT_MODE,
+) -> Dict[str, Any]:
+    base = {
+        "scope_paths": sorted(scope_paths),
+        "scope_dirs": sorted(scope_dirs),
+        "scope_root_mode": scope_root_mode,
+    }
     inside, error = run_git(root, ["rev-parse", "--is-inside-work-tree"])
     if error or (inside or "").strip() != "true":
-        return {
+        return dict(base, **{
             "available": False,
             "reason": error or "not a git work tree",
             "branch": None,
@@ -574,14 +773,12 @@ def git_snapshot(root: Path, scope_paths: List[str], scope_dirs: List[str]) -> D
             "status_sha256": None,
             "status_entries": [],
             "ignored_entries": 0,
-            "scope_paths": sorted(scope_paths),
-            "scope_dirs": sorted(scope_dirs),
-        }
+        })
 
     branch_out, branch_err = run_git(root, ["rev-parse", "--abbrev-ref", "HEAD"])
     head_out, head_err = run_git(root, ["rev-parse", "HEAD"])
     if branch_err or head_err:
-        return {
+        return dict(base, **{
             "available": False,
             "reason": branch_err or head_err,
             "branch": None,
@@ -589,13 +786,11 @@ def git_snapshot(root: Path, scope_paths: List[str], scope_dirs: List[str]) -> D
             "status_sha256": None,
             "status_entries": [],
             "ignored_entries": 0,
-            "scope_paths": sorted(scope_paths),
-            "scope_dirs": sorted(scope_dirs),
-        }
+        })
 
     status_out, status_err = run_git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
     if status_err:
-        return {
+        return dict(base, **{
             "available": False,
             "reason": status_err,
             "branch": (branch_out or "").strip(),
@@ -603,9 +798,7 @@ def git_snapshot(root: Path, scope_paths: List[str], scope_dirs: List[str]) -> D
             "status_sha256": None,
             "status_entries": [],
             "ignored_entries": 0,
-            "scope_paths": sorted(scope_paths),
-            "scope_dirs": sorted(scope_dirs),
-        }
+        })
 
     relevant: List[str] = []
     ignored = 0
@@ -615,11 +808,18 @@ def git_snapshot(root: Path, scope_paths: List[str], scope_dirs: List[str]) -> D
             continue
         if entry_relevant(entry, scope_paths, scope_dirs):
             relevant.append("%s\t%s\t%s" % (entry[0], path, old or ""))
-        else:
-            ignored += 1
+            continue
+        # Root-level entries in declared/tracked mode are not all task-relevant.
+        # `declared` keeps only explicitly declared paths (already matched above).
+        # `tracked` additionally keeps modified tracked root entries, while new
+        # untracked root files stay incidental.
+        if scope_root_mode == "tracked" and "/" not in normalize_rel(path) and entry[0] != "??":
+            relevant.append("%s\t%s\t%s" % (entry[0], path, old or ""))
+            continue
+        ignored += 1
     relevant.sort()
     status_sha = hashlib.sha256("\n".join(relevant).encode("utf-8")).hexdigest()
-    return {
+    return dict(base, **{
         "available": True,
         "reason": None,
         "branch": (branch_out or "").strip(),
@@ -627,9 +827,7 @@ def git_snapshot(root: Path, scope_paths: List[str], scope_dirs: List[str]) -> D
         "status_sha256": status_sha,
         "status_entries": relevant,
         "ignored_entries": ignored,
-        "scope_paths": sorted(scope_paths),
-        "scope_dirs": sorted(scope_dirs),
-    }
+    })
 
 
 def git_check_ignore(root: Path, rel: str) -> Tuple[Optional[bool], Optional[str]]:
@@ -756,6 +954,14 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
         print("error: paths file not found: %s" % paths_file, file=sys.stderr)
         return 2
 
+    _, config_root_mode, config_warning = read_config(root)
+    if config_warning:
+        print("warning: %s" % config_warning, file=sys.stderr)
+    scope_root_mode = args.scope_root_mode or config_root_mode
+    if scope_root_mode not in SCOPE_ROOT_MODES:
+        print("error: invalid scope-root-mode: %s" % scope_root_mode, file=sys.stderr)
+        return 2
+
     rels: List[str] = []
     skipped: List[str] = []
     for raw in paths_file.read_text(encoding="utf-8").splitlines():
@@ -790,7 +996,9 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
         if record.get("status") != "ok":
             issues += 1
 
-    scope_dirs = set(derive_scope_dirs(rels))
+    scope_dirs = set(
+        derive_scope_dirs(rels, include_root_dot=(scope_root_mode == "direct"))
+    )
     for value in args.scope_dir or []:
         normalized = normalize_scope_dir(value)
         if normalized is None:
@@ -798,7 +1006,7 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
             return 2
         scope_dirs.add(normalized)
     scope_dirs_list = sorted(scope_dirs)
-    git_info = git_snapshot(root, rels, scope_dirs_list)
+    git_info = git_snapshot(root, rels, scope_dirs_list, scope_root_mode)
 
     payload = {
         "schema": SCHEMA,
@@ -807,6 +1015,7 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
         "created_at": iso_now(),
         "root": str(root),
         "scope": "relevant-files+git",
+        "scope_root_mode": scope_root_mode,
         "max_file_bytes": args.max_bytes,
         "files": files,
         "git": git_info,
@@ -901,6 +1110,7 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
     print("files: %d ok, %d issue(s)" % (len(rels) - issues, issues))
     print("content_hashed_files: %d" % len(rels))
     print("git_status_dirs: %s" % (", ".join(git_info.get("scope_dirs") or []) or "(none)"))
+    print("scope_root_mode: %s" % scope_root_mode)
     print(
         "coverage_note: content hash covers only the listed files; git status "
         "monitors the listed directories, not their file contents"
@@ -927,8 +1137,7 @@ def cmd_status_guard(args: argparse.Namespace) -> int:
         print("status: unknown")
         print("reason: %s" % error)
         return 2
-    task_file = Path(args.task_file) if args.task_file else (root / ".handover" / (args.task + ".md"))
-    task_file = task_file.resolve()
+    task_file = resolve_task_file(root, args.task_file, args.task)
     if not within_root(root, task_file):
         print("status: unknown")
         print("reason: task file outside project root")
@@ -1062,8 +1271,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         print("reason: sidecar snapshot_id mismatch")
         return 2
 
-    task_file = Path(args.task_file) if args.task_file else (root / ".handover" / (args.task + ".md"))
-    task_file = task_file.resolve()
+    task_file = resolve_task_file(root, args.task_file, args.task)
     if not within_root(root, task_file):
         print("consistency: unknown")
         print("reason: task file outside project root")
@@ -1118,6 +1326,29 @@ def cmd_check(args: argparse.Namespace) -> int:
         print("reason: task fingerprint_sha256 mismatch")
         return 2
 
+    try:
+        task_text = task_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print("consistency: unknown")
+        print("reason: task body unreadable: %s" % exc)
+        return 2
+    computed_body_sha = task_body_sha256(task_text)
+    recorded_body_sha = task_data.get("body_sha256")
+    if recorded_body_sha in (None, ""):
+        body_state = "unknown"
+    elif not isinstance(recorded_body_sha, str) or not HEX_SHA_RE.match(recorded_body_sha):
+        body_state = "changed"
+    else:
+        body_state = "matched" if recorded_body_sha == computed_body_sha else "changed"
+    computed_goal_sha = section_sha256(task_text, GOAL_SECTION)
+    recorded_goal_sha = task_data.get("goal_sha256")
+    if recorded_goal_sha in (None, "") or computed_goal_sha is None:
+        goal_state = "unknown"
+    elif not isinstance(recorded_goal_sha, str) or not HEX_SHA_RE.match(recorded_goal_sha):
+        goal_state = "changed"
+    else:
+        goal_state = "matched" if recorded_goal_sha == computed_goal_sha else "changed"
+
     content_changed: List[str] = []
     incomplete: List[str] = []
     for rel, old in sorted(files_payload.items()):
@@ -1144,15 +1375,22 @@ def cmd_check(args: argparse.Namespace) -> int:
     git_changed: List[str] = []
     current_git: Optional[Dict[str, Any]] = None
     old_git = payload.get("git") or {}
+    scope_root_mode = str(old_git.get("scope_root_mode") or "direct")
+    if scope_root_mode not in SCOPE_ROOT_MODES:
+        scope_root_mode = "direct"
     if old_git.get("available"):
         scope_paths = list(old_git.get("scope_paths") or [])
         scope_dirs = list(old_git.get("scope_dirs") or [])
         # v1.1.0 sidecars may lack root-directory scope for root-level files.
-        # Add it conservatively so an existing baseline can still detect new
-        # root-level entries; a new save records "." explicitly.
-        if any("/" not in path for path in scope_paths) and "." not in scope_dirs:
+        # Add it conservatively only for legacy/direct sidecars; new sidecars
+        # record the chosen mode explicitly.
+        if (
+            scope_root_mode == "direct"
+            and any("/" not in path for path in scope_paths)
+            and "." not in scope_dirs
+        ):
             scope_dirs.append(".")
-        current_git = git_snapshot(root, scope_paths, scope_dirs)
+        current_git = git_snapshot(root, scope_paths, scope_dirs, scope_root_mode)
         if not current_git.get("available"):
             incomplete.append("git unavailable now: %s" % current_git.get("reason"))
         else:
@@ -1165,23 +1403,43 @@ def cmd_check(args: argparse.Namespace) -> int:
     else:
         incomplete.append("no git baseline: %s" % old_git.get("reason"))
 
+    body_lines = [
+        "task_body: %s" % body_state,
+        "task_body_sha256: %s" % (computed_body_sha or "unknown"),
+        "task_goal: %s" % goal_state,
+    ]
     if content_changed or git_changed:
         print("consistency: changed")
+        for line in body_lines:
+            print(line)
         if content_changed:
             print("content_changed: %s" % ", ".join(content_changed))
         if git_changed:
             print("git_changed: %s" % ", ".join(git_changed))
+        print("scope_root_mode: %s" % scope_root_mode)
         print("incomplete: %s" % ("true" if incomplete else "false"))
         if incomplete:
             print("incomplete_reason: %s" % "; ".join(incomplete))
         return 1
+    if body_state == "changed" or goal_state == "changed":
+        print("consistency: matched")
+        print("integrity: changed")
+        for line in body_lines:
+            print(line)
+        print("reason: task document hash differs from frontmatter; re-seal after an intentional edit")
+        return 3
     if incomplete:
         print("consistency: unknown")
         print("reason: %s" % "; ".join(incomplete))
+        for line in body_lines:
+            print(line)
         return 2
     print("consistency: matched")
+    for line in body_lines:
+        print(line)
     print("content_hashed_files: %d" % len(files_payload))
     print("git_status_dirs: %s" % (", ".join(old_git.get("scope_dirs") or []) or "(none)"))
+    print("scope_root_mode: %s" % str(old_git.get("scope_root_mode") or "direct"))
     print("scope: %d file(s), %d git entries" % (
         len(files_payload),
         len(old_git.get("status_entries") or []),
@@ -1400,6 +1658,92 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_entry_lint(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    entry = root / "handover.md"
+    if not entry.is_file():
+        print("status: missing")
+        print("reason: handover.md not found")
+        return 2
+    try:
+        text = entry.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print("status: error")
+        print("reason: cannot read handover.md: %s" % exc)
+        return 2
+    task_dir = root / ".handover"
+    tasks: Dict[str, Path] = {}
+    if task_dir.is_dir():
+        for path in sorted(task_dir.glob("*.md")):
+            if path.is_file():
+                tasks[str(path.relative_to(root))] = path
+    linked: Dict[str, str] = {}
+    errors: List[str] = []
+    warnings: List[str] = []
+    for line in text.splitlines():
+        match = ENTRY_LINK_RE.match(line)
+        if not match:
+            continue
+        label, target = match.group(1).strip(), match.group(2).strip()
+        if not (target.startswith(".handover/") and target.endswith(".md")):
+            continue
+        if target.startswith(".handover/archive/"):
+            continue
+        if target in linked:
+            errors.append("duplicate entry link: %s" % target)
+            continue
+        linked[target] = label
+        path = (root / target).resolve()
+        if not within_root(root, path):
+            errors.append("entry link resolves outside project: %s" % target)
+        elif not path.is_file():
+            errors.append("dead entry link: %s" % target)
+        if label != Path(target).stem:
+            warnings.append(
+                "entry label %r does not match task-id %r"
+                % (label, Path(target).stem)
+            )
+        rest = line[match.end() :].strip()
+        if rest:
+            fields = [part.strip() for part in rest.split(" — ")]
+            if len(fields) > 3:
+                warnings.append(
+                    "entry line may include a task summary; keep title/status/updated_at only: %s"
+                    % target
+                )
+        if len(line) > 120:
+            warnings.append(
+                "entry line is long; keep title/status/updated_at only: %s" % target
+            )
+    for rel in tasks:
+        if rel not in linked:
+            errors.append("task not listed in handover.md: %s" % rel)
+    payload = {
+        "status": "invalid" if errors else "ok",
+        "entry": "handover.md",
+        "tasks": len(tasks),
+        "linked": len(linked),
+        "errors": errors,
+        "warnings": warnings,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    else:
+        print("status: %s" % payload["status"])
+        print("entry: handover.md")
+        print("tasks: %d" % len(tasks))
+        print("linked: %d" % len(linked))
+        if errors:
+            print("errors:")
+            for error in errors:
+                print("- %s" % error)
+        if warnings:
+            print("warnings:")
+            for warning in warnings:
+                print("- %s" % warning)
+    return 1 if errors else 0
+
+
 def estimate_tokens(text: str) -> int:
     """Rough mixed-language estimate: UTF-8 bytes / 3.
 
@@ -1426,14 +1770,356 @@ def split_sections(body_lines: List[str]) -> List[Tuple[str, List[str]]]:
     return [(n, lines) for n, lines in sections if "\n".join(lines).strip()]
 
 
+def validate_task_document(
+    root: Path,
+    task: str,
+    task_file: Path,
+    require_seal: bool = False,
+    require_project_context: bool = False,
+    max_tokens: int = DEFAULT_TASK_MAX_TOKENS,
+    check_existing_hashes: bool = True,
+) -> Tuple[List[str], List[str], Dict[str, Any]]:
+    """Validate a generated task document. Returns (errors, warnings, info)."""
+    errors: List[str] = []
+    warnings: List[str] = []
+    info: Dict[str, Any] = {
+        "task": task,
+        "file": str(task_file.relative_to(root)) if within_root(root, task_file) else str(task_file),
+        "status": "ok",
+    }
+    if not task_file.is_file():
+        errors.append("task file missing")
+        info["status"] = "missing"
+        return errors, warnings, info
+    try:
+        text = task_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        errors.append("cannot read task file: %s" % exc)
+        info["status"] = "error"
+        return errors, warnings, info
+    data, parse_status = read_frontmatter(task_file)
+    if data is None:
+        errors.append("frontmatter unreadable: %s" % parse_status)
+        info["status"] = "error"
+        info["tokens"] = estimate_tokens(text)
+        return errors, warnings, info
+    missing = [key for key in REQUIRED_TASK_KEYS if key not in data]
+    if missing:
+        errors.append("missing frontmatter keys: %s" % ", ".join(missing))
+    if not schema_is_current(data.get("schema"), allow_string=True):
+        errors.append("schema missing or unsupported")
+    if data.get("task_id") != task:
+        errors.append("task_id mismatch")
+    if not str(data.get("title") or "").strip():
+        errors.append("title missing or empty")
+    task_status = str(data.get("status") or "unknown")
+    if task_status not in KNOWN_STATUS - {"unknown"}:
+        errors.append("status missing or unsupported")
+    if parse_iso(data.get("updated_at") if isinstance(data.get("updated_at"), str) else None) is None:
+        errors.append("updated_at missing or not an ISO 8601 value with timezone")
+    project_root = data.get("project_root")
+    if not project_root:
+        errors.append("project_root missing")
+    elif Path(str(project_root)).resolve() != root:
+        errors.append("project_root mismatch")
+
+    frontmatter, body = split_frontmatter_body(text)
+    if frontmatter is None:
+        errors.append("missing frontmatter block")
+        body = ""
+    sections = split_sections(body.splitlines())
+    names = [name for name, _ in sections]
+    duplicate_names = sorted({name for name in names if names.count(name) > 1})
+    if duplicate_names:
+        errors.append("duplicate sections: %s" % ", ".join(duplicate_names))
+    section_texts: Dict[str, str] = {}
+    for required in REQUIRED_TASK_SECTIONS:
+        matches = [name for name in names if name == required or name.startswith(required)]
+        if not matches:
+            errors.append("missing section: ## %s" % required)
+            continue
+        content = section_content(body, required) or ""
+        section_texts[required] = content
+        if not content.strip():
+            errors.append("empty section: ## %s" % required)
+        if required == "快速接手摘要":
+            if not SUMMARY_GOAL_RE.search(content):
+                errors.append("快速接手摘要 must state 目标")
+            if not SUMMARY_STAGE_RE.search(content):
+                errors.append("快速接手摘要 must state 当前阶段")
+            if len([line for line in content.splitlines() if line.strip()]) > 20:
+                warnings.append("快速接手摘要 exceeds 20 non-empty lines")
+    goal_text = section_texts.get("目标与边界", "")
+    if goal_text and not ACCEPTANCE_RE.search(goal_text):
+        errors.append("目标与边界 must state 验收/完成判定")
+    progress_text = section_texts.get("当前进度", "")
+    if progress_text and not PROGRESS_STATE_RE.search(progress_text):
+        errors.append("当前进度 must state 已实现/已验证/未验收/待办/阻塞等")
+    next_text = section_texts.get("下一步", "")
+    if next_text and task_status in ACTIVE and not NEXT_ACTION_RE.search(next_text):
+        errors.append("下一步 must state a concrete action (运行/实现/修改/测试/确认等)")
+    if require_project_context:
+        matches = [name for name in names if name.startswith(PROJECT_CONTEXT_SECTION)]
+        if not matches:
+            errors.append("missing section: ## %s" % PROJECT_CONTEXT_SECTION)
+        else:
+            content = section_content(body, PROJECT_CONTEXT_SECTION) or ""
+            for marker in ("用途", "技术栈", "规则来源"):
+                if marker not in content:
+                    errors.append("项目上下文 missing %s" % marker)
+    if STALE_SECTION not in names and not any(name.startswith(STALE_SECTION) for name in names):
+        warnings.append("missing optional section: ## %s" % STALE_SECTION)
+
+    body_hash = task_body_sha256(text)
+    goal_hash = section_sha256(text, GOAL_SECTION)
+    recorded_body = data.get("body_sha256")
+    recorded_goal = data.get("goal_sha256")
+    info["body_sha256"] = body_hash
+    info["goal_sha256"] = goal_hash
+    info["body_sha256_match"] = "unknown"
+    info["goal_sha256_match"] = "unknown"
+    if goal_hash is None:
+        errors.append("cannot compute goal_sha256; missing ## %s" % GOAL_SECTION)
+    if check_existing_hashes:
+        if recorded_body in (None, ""):
+            if require_seal:
+                errors.append("body_sha256 missing; run seal before save")
+            else:
+                warnings.append("body_sha256 missing; task body is not sealed")
+        elif not isinstance(recorded_body, str) or not HEX_SHA_RE.match(recorded_body):
+            errors.append("body_sha256 is not a lowercase SHA-256")
+        elif recorded_body != body_hash:
+            errors.append("body_sha256 mismatch; task body changed after seal")
+        else:
+            info["body_sha256_match"] = "matched"
+        if goal_hash is not None:
+            if recorded_goal in (None, ""):
+                if require_seal:
+                    errors.append("goal_sha256 missing; run seal before save")
+                else:
+                    warnings.append("goal_sha256 missing; task goal is not sealed")
+            elif not isinstance(recorded_goal, str) or not HEX_SHA_RE.match(recorded_goal):
+                errors.append("goal_sha256 is not a lowercase SHA-256")
+            elif recorded_goal != goal_hash:
+                errors.append("goal_sha256 mismatch; goal changed after seal")
+            else:
+                info["goal_sha256_match"] = "matched"
+
+    tokens = estimate_tokens(text)
+    info["tokens"] = tokens
+    if max_tokens > 0 and tokens > max_tokens:
+        errors.append(
+            "task document ~%d tokens exceeds max %d; split or compress evidence"
+            % (tokens, max_tokens)
+        )
+    elif tokens > TASK_SOFT_TOKEN_BUDGET:
+        warnings.append(
+            "task document ~%d tokens exceeds soft budget %d"
+            % (tokens, TASK_SOFT_TOKEN_BUDGET)
+        )
+    decorative = sum(1 for line in body.splitlines() if line.strip() in ("---", "***", "___"))
+    if decorative:
+        warnings.append("task body has %d decorative divider line(s)" % decorative)
+    info["sections"] = names
+    info["status"] = "invalid" if errors else "ok"
+    return errors, warnings, info
+
+
+def _print_lint(info: Dict[str, Any], errors: List[str], warnings: List[str]) -> None:
+    print("task: %s" % info.get("task"))
+    print("file: %s" % info.get("file"))
+    print("status: %s" % info.get("status"))
+    if "tokens" in info:
+        print(
+            "tokens: %d (estimate utf8_bytes/3; soft budget %d, max %d)"
+            % (int(info["tokens"]), TASK_SOFT_TOKEN_BUDGET, DEFAULT_TASK_MAX_TOKENS)
+        )
+    print("body_sha256: %s" % (info.get("body_sha256") or "unknown"))
+    print("body_sha256_match: %s" % info.get("body_sha256_match", "unknown"))
+    print("goal_sha256: %s" % (info.get("goal_sha256") or "unknown"))
+    print("goal_sha256_match: %s" % info.get("goal_sha256_match", "unknown"))
+    if info.get("sections"):
+        print("sections: %s" % ", ".join(info["sections"]))
+    if errors:
+        print("errors:")
+        for error in errors:
+            print("- %s" % error)
+    if warnings:
+        print("warnings:")
+        for warning in warnings:
+            print("- %s" % warning)
+
+
+def cmd_task_lint(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    error = task_id_error(args.task)
+    if error:
+        print("status: error")
+        print("reason: %s" % error)
+        return 2
+    task_file = resolve_task_file(root, args.task_file, args.task)
+    if not within_root(root, task_file):
+        print("status: error")
+        print("reason: task file outside project root")
+        return 2
+    errors, warnings, info = validate_task_document(
+        root,
+        args.task,
+        task_file,
+        require_seal=bool(args.require_seal),
+        require_project_context=bool(args.require_project_context),
+        max_tokens=int(args.max_tokens),
+    )
+    if args.json:
+        print(
+            json.dumps(
+                {"info": info, "errors": errors, "warnings": warnings},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+    else:
+        _print_lint(info, errors, warnings)
+    if info.get("status") in ("missing", "error"):
+        return 2
+    return 1 if errors else 0
+
+
+def cmd_seal(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    error = task_id_error(args.task)
+    if error:
+        print("status: error")
+        print("reason: %s" % error)
+        return 2
+    raw_file = raw_task_path(root, args.task_file, args.task)
+    if raw_file.is_symlink():
+        print("status: error")
+        print("reason: task file is a symlink; refusing to seal")
+        return 2
+    task_file = raw_file.resolve()
+    if not within_root(root, task_file):
+        print("status: error")
+        print("reason: task file outside project root")
+        return 2
+    errors, warnings, info = validate_task_document(
+        root,
+        args.task,
+        task_file,
+        require_seal=False,
+        require_project_context=bool(args.require_project_context),
+        max_tokens=int(args.max_tokens),
+        check_existing_hashes=False,
+    )
+    if info.get("status") in ("missing", "error"):
+        _print_lint(info, errors, warnings)
+        return 2
+    if errors:
+        _print_lint(info, errors, warnings)
+        return 1
+    try:
+        text = task_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print("status: error")
+        print("reason: cannot read task file: %s" % exc)
+        return 2
+    body_hash = task_body_sha256(text)
+    goal_hash = section_sha256(text, GOAL_SECTION)
+    if not body_hash or not goal_hash:
+        print("status: error")
+        print("reason: cannot compute body/goal hash")
+        return 2
+    updated = update_frontmatter_fields(
+        text, {"body_sha256": body_hash, "goal_sha256": goal_hash}
+    )
+    fd, tmp = tempfile.mkstemp(prefix=task_file.name + ".", suffix=".tmp", dir=str(task_file.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(updated)
+        os.replace(tmp, task_file)
+    except OSError as exc:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        print("status: error")
+        print("reason: write failed: %s" % exc)
+        return 2
+    print("status: sealed")
+    print("task: %s" % args.task)
+    print("file: %s" % (task_file.relative_to(root) if within_root(root, task_file) else task_file))
+    print("body_sha256: %s" % body_hash)
+    print("goal_sha256: %s" % goal_hash)
+    print("tokens: %d" % estimate_tokens(updated))
+    return 0
+
+
+def cmd_goal_guard(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    error = task_id_error(args.task)
+    if error:
+        print("result: error")
+        print("reason: %s" % error)
+        return 2
+    old_file = resolve_task_file(root, args.old_file, args.task)
+    new_file = resolve_task_file(root, args.new_file, args.task)
+    for label, path in (("old", old_file), ("new", new_file)):
+        if not within_root(root, path):
+            print("result: error")
+            print("reason: %s file outside project root" % label)
+            return 2
+    if not old_file.is_file():
+        print("result: new-task")
+        print("old_file: absent")
+        return 0
+    if not new_file.is_file():
+        print("result: error")
+        print("reason: new file missing")
+        return 2
+    try:
+        old_text = old_file.read_text(encoding="utf-8")
+        new_text = new_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print("result: error")
+        print("reason: cannot read task file: %s" % exc)
+        return 2
+    old_data, old_status = read_frontmatter(old_file)
+    new_data, new_status = read_frontmatter(new_file)
+    if old_data is None or new_data is None:
+        print("result: error")
+        print("reason: old/new frontmatter unreadable (%s/%s)" % (old_status, new_status))
+        return 2
+    if old_data.get("task_id") != args.task or new_data.get("task_id") != args.task:
+        print("result: error")
+        print("reason: task_id mismatch")
+        return 2
+    old_goal = section_sha256(old_text, GOAL_SECTION)
+    new_goal = section_sha256(new_text, GOAL_SECTION)
+    if old_goal is None or new_goal is None:
+        print("result: error")
+        print("reason: missing ## %s in old or new task" % GOAL_SECTION)
+        return 2
+    print("old_goal_sha256: %s" % old_goal)
+    print("new_goal_sha256: %s" % new_goal)
+    if old_goal == new_goal:
+        print("result: goal-unchanged")
+        return 0
+    if args.goal_change_authorised:
+        print("result: goal-change-authorised")
+        print("note: record the user's explicit authorisation in 决策与尝试")
+        return 0
+    print("result: goal-changed")
+    print("action: create a new task-id or ask the user for explicit goal-change authorisation")
+    return 1
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     error = task_id_error(args.task)
     if error:
         print("error: %s" % error, file=sys.stderr)
         return 2
-    task_file = Path(args.task_file) if args.task_file else (root / ".handover" / (args.task + ".md"))
-    task_file = task_file.resolve()
+    task_file = resolve_task_file(root, args.task_file, args.task)
     if not within_root(root, task_file):
         print("error: task file outside project root", file=sys.stderr)
         return 2
@@ -2006,6 +2692,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_fp.add_argument("--out")
     p_fp.add_argument("--snapshot-id")
     p_fp.add_argument("--scope-dir", action="append", default=[])
+    p_fp.add_argument("--scope-root-mode", choices=sorted(SCOPE_ROOT_MODES))
     p_fp.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
     p_fp.set_defaults(func=cmd_fingerprint)
 
@@ -2033,6 +2720,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_ignore = sub.add_parser("ignore-check", help="check task data is ignored and untracked")
     p_ignore.add_argument("--root", required=True)
     p_ignore.set_defaults(func=cmd_ignore_check)
+
+    p_entry = sub.add_parser("entry-lint", help="check handover.md task links")
+    p_entry.add_argument("--root", required=True)
+    p_entry.add_argument("--json", action="store_true")
+    p_entry.set_defaults(func=cmd_entry_lint)
+
+    p_lint = sub.add_parser("task-lint", help="validate a generated task document")
+    p_lint.add_argument("--root", required=True)
+    p_lint.add_argument("--task", required=True)
+    p_lint.add_argument("--task-file")
+    p_lint.add_argument("--require-seal", action="store_true")
+    p_lint.add_argument("--require-project-context", action="store_true")
+    p_lint.add_argument("--max-tokens", type=int, default=DEFAULT_TASK_MAX_TOKENS)
+    p_lint.add_argument("--json", action="store_true")
+    p_lint.set_defaults(func=cmd_task_lint)
+
+    p_seal = sub.add_parser("seal", help="validate, hash, and seal a task document")
+    p_seal.add_argument("--root", required=True)
+    p_seal.add_argument("--task", required=True)
+    p_seal.add_argument("--task-file")
+    p_seal.add_argument("--require-project-context", action="store_true")
+    p_seal.add_argument("--max-tokens", type=int, default=DEFAULT_TASK_MAX_TOKENS)
+    p_seal.set_defaults(func=cmd_seal)
+
+    p_goal = sub.add_parser("goal-guard", help="compare an existing and a proposed task goal")
+    p_goal.add_argument("--root", required=True)
+    p_goal.add_argument("--task", required=True)
+    p_goal.add_argument("--old-file")
+    p_goal.add_argument("--new-file", required=True)
+    p_goal.add_argument("--goal-change-authorised", action="store_true")
+    p_goal.set_defaults(func=cmd_goal_guard)
 
     p_stats = sub.add_parser("stats", help="estimate token distribution of a task document")
     p_stats.add_argument("--root", required=True)

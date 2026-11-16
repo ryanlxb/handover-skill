@@ -1,6 +1,6 @@
-# v1.1.2 Validation Report
+# v1.2.0 Validation Report
 
-- Date (UTC): 2026-11-04T03:11:25+00:00
+- Date (UTC): 2026-11-16T09:17:52+00:00
 - Target: `handover`
 - Scope: structural/static checks only; no installation, no skill execution.
 
@@ -8,19 +8,21 @@
 
 | file | lines | bytes | fences |
 |---|---:|---:|---|
-| CHECKLIST.md | 158 | 15803 | OK |
-| E2E_TEST_RESULTS.md | 316 | 23622 | OK |
-| FIXTURE_TEST_RESULTS.md | 97 | 8420 | OK |
-| README.md | 325 | 28041 | OK |
-| SKILL.md | 124 | 11998 | OK |
+| CHECKLIST.md | 185 | 18878 | OK |
+| E2E_TEST_RESULTS.md | 375 | 30234 | OK |
+| FIXTURE_TEST_RESULTS.md | 108 | 9760 | OK |
+| README.md | 360 | 31727 | OK |
+| SKILL.md | 115 | 11970 | OK |
 | SOURCES.md | 18 | 1901 | OK |
 | references/analysis.md | 75 | 3614 | OK |
-| references/archive-restore.md | 41 | 4070 | OK |
-| references/brief-load.md | 130 | 8556 | OK |
-| references/data-model.md | 89 | 10135 | OK |
-| references/fingerprint.md | 37 | 6518 | OK |
-| references/save.md | 105 | 9957 | OK |
-| references/task-template.md | 90 | 5132 | OK |
+| references/archive-restore.md | 41 | 4102 | OK |
+| references/brief-load.md | 140 | 9708 | OK |
+| references/data-model.md | 101 | 11955 | OK |
+| references/entry-template.md | 30 | 1111 | OK |
+| references/fingerprint.md | 40 | 7605 | OK |
+| references/save.md | 118 | 11981 | OK |
+| references/task-template.md | 106 | 6128 | OK |
+| references/token-hygiene.md | 21 | 1313 | OK |
 
 ## Checks
 

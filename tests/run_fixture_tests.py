@@ -41,12 +41,41 @@ fingerprint_file: .handover/login.fingerprint.json
 fingerprint_sha256: null
 fingerprint_scope: relevant-files+git
 fingerprint_checked_at: null
+body_sha256: null
+goal_sha256: null
 ---
 
 # Login task
 
 ## 快速接手摘要
 - 目标：fixture
+"""
+
+FULL_TASK_BODY = """## 项目上下文（引用，不复制）
+- 用途：fixture project
+- 技术栈：Python 3.9+ 标准库
+- 规则来源：CLAUDE.md
+- 本次核对：无冲突
+- 规则冲突/过期：无
+
+## 快速接手摘要
+- 目标：fixture
+- 当前阶段：fixture
+
+## 目标与边界
+- 目标：完成 fixture 任务
+- 验收：fixture 测试通过
+
+## 当前进度
+- 已实现：fixture
+- 未验收：等待用户确认
+
+## 下一步
+1. 运行 fixture 测试。
+2. 汇报结果。
+
+## 接手必读
+- src/login.ts
 """
 
 CASES: List[Dict[str, object]] = []
@@ -143,6 +172,16 @@ def set_task_text(root: Path, old: str, new: str) -> None:
     if old not in text:
         raise RuntimeError("task text not found: %s" % old)
     task.write_text(text.replace(old, new), encoding="utf-8")
+
+
+def make_lint_task(root: Path) -> Path:
+    task = root / ".handover" / "login.md"
+    text = task.read_text(encoding="utf-8")
+    old = "## 快速接手摘要\n- 目标：fixture"
+    if old not in text:
+        raise RuntimeError("fixture task body marker missing")
+    task.write_text(text.replace(old, FULL_TASK_BODY.rstrip("\n")), encoding="utf-8")
+    return task
 
 
 def check(root: Path, sidecar_sha: str, task_file: Optional[Path] = None) -> Tuple[int, str, str]:
@@ -787,7 +826,7 @@ def case_root_scope_new_file() -> None:
     (root / "README.md").write_text("hello\n", encoding="utf-8")
     git(root, "add", "README.md")
     git(root, "commit", "-qm", "readme")
-    snap, sha, _ = fingerprint(root, ["README.md"])
+    snap, sha, _ = fingerprint(root, ["README.md"], extra=["--scope-root-mode", "direct"])
     bind_task(root, snap, sha)
     (root / "docs").mkdir()
     (root / "docs" / "note.md").write_text("note\n", encoding="utf-8")
@@ -797,12 +836,37 @@ def case_root_scope_new_file() -> None:
     code_new, out_new, err_new = check(root, sha)
     ok_new = code_new == 1 and "consistency: changed" in out_new and "git_changed" in out_new
     record(
-        "根目录声明只覆盖直属文件：子目录新增不触发，根目录新增触发",
+        "direct 根目录 scope：子目录新增不触发，根目录新增触发",
         "subdir matched; root changed",
         code_new,
         out_sub + "\n---\n" + out_new,
         err_sub + "\n---\n" + err_new,
         ok_sub and ok_new,
+    )
+
+
+def case_root_scope_declared_default() -> None:
+    root = make_root()
+    (root / "README.md").write_text("hello\n", encoding="utf-8")
+    git(root, "add", "README.md")
+    git(root, "commit", "-qm", "readme")
+    snap, sha, _ = fingerprint(root, ["README.md"])
+    bind_task(root, snap, sha)
+    (root / "NEW.md").write_text("new\n", encoding="utf-8")
+    code, out, err = check(root, sha)
+    ok = (
+        code == 0
+        and "consistency: matched" in out
+        and "scope_root_mode: declared" in out
+        and "out_of_scope_changes: 1" in out
+    )
+    record(
+        "declared 根目录 scope：新根目录文件只计为范围外",
+        "matched + out_of_scope_changes",
+        code,
+        out,
+        err,
+        ok,
     )
 
 
@@ -836,6 +900,7 @@ def case_check_legacy_root_scope() -> None:
     data["git"]["scope_dirs"] = [
         directory for directory in data["git"].get("scope_dirs", []) if directory != "."
     ]
+    data["git"].pop("scope_root_mode", None)
     sidecar.write_text(
         json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -1539,6 +1604,357 @@ def case_task_body_edit_not_detected() -> None:
     )
 
 
+def case_task_lint_and_seal() -> None:
+    root = make_root()
+    task = make_lint_task(root)
+    code, out, err = run(["task-lint", "--root", str(root), "--task", "login"])
+    ok_lint = code == 0 and "status: ok" in out and "body_sha256_match: unknown" in out
+    code_seal, out_seal, err_seal = run(
+        [
+            "seal",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--require-project-context",
+        ]
+    )
+    ok_seal = code_seal == 0 and "status: sealed" in out_seal and "body_sha256:" in out_seal
+    code_after, out_after, err_after = run(
+        [
+            "task-lint",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--require-seal",
+            "--require-project-context",
+        ]
+    )
+    ok_after = (
+        code_after == 0
+        and "status: ok" in out_after
+        and "body_sha256_match: matched" in out_after
+        and "goal_sha256_match: matched" in out_after
+    )
+    set_task_text(root, "## 下一步", "## 后续")
+    code_missing, out_missing, err_missing = run(
+        ["task-lint", "--root", str(root), "--task", "login", "--require-seal"]
+    )
+    ok_missing = code_missing == 1 and "missing section: ## 下一步" in out_missing
+    record(
+        "task-lint/seal：必需章节与正文/目标哈希",
+        "lint ok; seal ok; sealed lint ok; missing next-step fails",
+        code_missing,
+        "\n---\n".join([out, out_seal, out_after, out_missing]),
+        "\n---\n".join([err, err_seal, err_after, err_missing]),
+        ok_lint and ok_seal and ok_after and ok_missing,
+    )
+    # Keep `task` referenced for readers; the file is intentionally left modified.
+    del task
+
+
+def case_task_lint_minimum_contract() -> None:
+    root = make_root()
+    make_lint_task(root)
+    set_task_text(root, "- 当前阶段：fixture\n", "")
+    set_task_text(root, "- 验收：fixture 测试通过", "- 完成：fixture")
+    set_task_text(root, "- 已实现：fixture\n- 未验收：等待用户确认", "- 进行中")
+    set_task_text(root, "1. 运行 fixture 测试。\n2. 汇报结果。", "1. 继续。")
+    code, out, err = run(["task-lint", "--root", str(root), "--task", "login"])
+    ok = (
+        code == 1
+        and "当前阶段" in out
+        and "验收" in out
+        and "下一步" in out
+    )
+    record(
+        "task-lint：最低交接契约（当前阶段/验收/进度状态/下一步动作）",
+        "missing markers -> exit 1",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_reseal_after_edit() -> None:
+    root = make_root()
+    make_lint_task(root)
+    code1, out1, err1 = run(["seal", "--root", str(root), "--task", "login"])
+    set_task_text(root, "- 未验收：等待用户确认", "- 未验收：等待用户确认\n- 新增一行")
+    code2, out2, err2 = run(["seal", "--root", str(root), "--task", "login"])
+    code3, out3, err3 = run(
+        ["task-lint", "--root", str(root), "--task", "login", "--require-seal"]
+    )
+    ok = (
+        code1 == 0
+        and code2 == 0
+        and "status: sealed" in out2
+        and code3 == 0
+        and "body_sha256_match: matched" in out3
+    )
+    record(
+        "seal 允许在正文编辑后重新封存",
+        "re-seal exit 0; sealed lint matched",
+        code3,
+        "\n---\n".join([out1, out2, out3]),
+        "\n---\n".join([err1, err2, err3]),
+        ok,
+    )
+
+
+def case_check_body_hash_integrity() -> None:
+    root = make_root()
+    make_lint_task(root)
+    snap, sha, _ = fingerprint(root, ["src/login.ts"])
+    bind_task(root, snap, sha)
+    code_seal, out_seal, err_seal = run(["seal", "--root", str(root), "--task", "login"])
+    code, out, err = check(root, sha)
+    ok_before = (
+        code_seal == 0
+        and code == 0
+        and "consistency: matched" in out
+        and "task_body: matched" in out
+        and "task_goal: matched" in out
+    )
+    set_task_text(root, "- 未验收：等待用户确认", "- 未验收：等待用户确认\n- 新增一行")
+    code_bad, out_bad, err_bad = check(root, sha)
+    ok_bad = code_bad == 3 and "integrity: changed" in out_bad and "task_body: changed" in out_bad
+    record(
+        "check：正文被改写后报告 integrity changed（exit 3）",
+        "matched first; body edit -> exit 3",
+        code_bad,
+        out + "\n---\n" + out_bad,
+        err + "\n---\n" + err_bad,
+        ok_before and ok_bad,
+    )
+
+
+def case_goal_guard() -> None:
+    root = make_root()
+    old = make_lint_task(root)
+    new = root / ".handover" / "login.proposed.md"
+    text = old.read_text(encoding="utf-8")
+    new.write_text(text.replace("完成 fixture 任务", "完成另一个目标"), encoding="utf-8")
+    TEMP_PATHS.append(new)
+    code_changed, out_changed, err_changed = run(
+        [
+            "goal-guard",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--old-file",
+            str(old),
+            "--new-file",
+            str(new),
+        ]
+    )
+    ok_changed = code_changed == 1 and "result: goal-changed" in out_changed
+    code_auth, out_auth, err_auth = run(
+        [
+            "goal-guard",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--old-file",
+            str(old),
+            "--new-file",
+            str(new),
+            "--goal-change-authorised",
+        ]
+    )
+    ok_auth = code_auth == 0 and "result: goal-change-authorised" in out_auth
+    same = root / ".handover" / "login.same.md"
+    same.write_text(text, encoding="utf-8")
+    TEMP_PATHS.append(same)
+    code_same, out_same, err_same = run(
+        [
+            "goal-guard",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--old-file",
+            str(old),
+            "--new-file",
+            str(same),
+        ]
+    )
+    ok_same = code_same == 0 and "result: goal-unchanged" in out_same
+    record(
+        "goal-guard：目标变更需显式授权",
+        "changed exit 1; authorised exit 0; same exit 0",
+        code_changed,
+        "\n---\n".join([out_changed, out_auth, out_same]),
+        "\n---\n".join([err_changed, err_auth, err_same]),
+        ok_changed and ok_auth and ok_same,
+    )
+
+
+def case_relative_task_file_from_subdir() -> None:
+    root = make_root()
+    snap, sha, _ = fingerprint(root, ["src/login.ts"])
+    bind_task(root, snap, sha)
+    code, out, err = run(
+        [
+            "check",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--task-file",
+            ".handover/login.md",
+            "--expected-sha256",
+            sha,
+        ],
+        cwd=root.parent,
+    )
+    ok = code == 0 and "consistency: matched" in out
+    record(
+        "check --task-file 相对路径按 --root 解析",
+        "matched from parent cwd",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_seal_task_symlink_refused() -> None:
+    root = make_root()
+    make_lint_task(root)
+    business = root / "business.txt"
+    business.write_text("do not overwrite\n", encoding="utf-8")
+    task = root / ".handover" / "login.md"
+    task.unlink()
+    task.symlink_to(business)
+    code, out, err = run(["seal", "--root", str(root), "--task", "login"])
+    ok = code == 2 and "symlink" in out and business.read_text(encoding="utf-8") == "do not overwrite\n"
+    record(
+        "seal 拒绝通过符号链接写任务文件",
+        "exit 2; target unchanged",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_scope_root_mode_config() -> None:
+    root = make_root()
+    (root / "README.md").write_text("hello\n", encoding="utf-8")
+    git(root, "add", "README.md")
+    git(root, "commit", "-qm", "readme")
+    (root / ".handover" / "config.yaml").write_text(
+        "stale_after_days: 14\nscope_root_mode: direct\n", encoding="utf-8"
+    )
+    snap, sha, _ = fingerprint(root, ["README.md"])
+    bind_task(root, snap, sha)
+    (root / "NEW.md").write_text("new\n", encoding="utf-8")
+    code, out, err = check(root, sha)
+    ok = code == 1 and "consistency: changed" in out and "scope_root_mode: direct" in out
+    record(
+        "config scope_root_mode=direct 恢复根目录直属 scope",
+        "changed",
+        code,
+        out,
+        err,
+        ok,
+    )
+
+
+def case_invalid_scope_root_mode() -> None:
+    root = make_root()
+    (root / ".handover" / "config.yaml").write_text(
+        "stale_after_days: 14\nscope_root_mode: bogus\n", encoding="utf-8"
+    )
+    pfile = paths_file(root, ["src/login.ts"])
+    fp_code, fp_out, fp_err = run(
+        [
+            "fingerprint",
+            "--root",
+            str(root),
+            "--task",
+            "login",
+            "--paths",
+            str(pfile),
+        ]
+    )
+    snap = re.search(r"^snapshot_id: (.+)$", fp_out, re.M)
+    sha = re.search(r"^sidecar_sha256: (.+)$", fp_out, re.M)
+    if not snap or not sha:
+        raise RuntimeError("fingerprint output missing fields: %s %s" % (fp_out, fp_err))
+    bind_task(root, snap.group(1).strip(), sha.group(1).strip())
+    code, check_out, err = check(root, sha.group(1).strip())
+    ok = (
+        fp_code == 0
+        and "invalid scope_root_mode" in fp_err
+        and "scope_root_mode: declared" in fp_out
+        and code == 0
+        and "consistency: matched" in check_out
+    )
+    record(
+        "无效 scope_root_mode 告警并使用默认 declared",
+        "warning + matched",
+        code,
+        fp_out + "\n---\n" + check_out,
+        fp_err + "\n---\n" + err,
+        ok,
+    )
+
+
+def case_entry_lint() -> None:
+    root = make_root()
+    entry = root / "handover.md"
+    entry.write_text(
+        "# Fixture\n\n## 任务列表\n\n"
+        "- [login](.handover/login.md) — Login task — in-progress — 2026-11-01T10:00:00+08:00\n",
+        encoding="utf-8",
+    )
+    code_ok, out_ok, err_ok = run(["entry-lint", "--root", str(root)])
+    ok_valid = code_ok == 0 and "status: ok" in out_ok
+    other = root / ".handover" / "other.md"
+    other.write_text(
+        TASK_TEMPLATE.format(root=root)
+        .replace("task_id: login", "task_id: other")
+        .replace("login.fingerprint.json", "other.fingerprint.json"),
+        encoding="utf-8",
+    )
+    TEMP_PATHS.append(other)
+    code_missing, out_missing, err_missing = run(["entry-lint", "--root", str(root)])
+    ok_missing = code_missing == 1 and "task not listed" in out_missing
+    entry.write_text(
+        entry.read_text(encoding="utf-8")
+        + "- [other](.handover/other.md) — Other — a summary that should not be here — in-progress — 2026-11-01T10:00:00+08:00\n",
+        encoding="utf-8",
+    )
+    code_warn, out_warn, err_warn = run(["entry-lint", "--root", str(root)])
+    ok_warn = code_warn == 0 and "may include a task summary" in out_warn
+    entry.write_text(
+        entry.read_text(encoding="utf-8")
+        + "- [other](.handover/other.md) — duplicate\n"
+        + "- [dead](.handover/dead.md) — Dead — in-progress — 2026-11-01T10:00:00+08:00\n",
+        encoding="utf-8",
+    )
+    code_bad, out_bad, err_bad = run(["entry-lint", "--root", str(root)])
+    ok_bad = (
+        code_bad == 1
+        and "duplicate entry link" in out_bad
+        and "dead entry link" in out_bad
+    )
+    record(
+        "entry-lint：有效入口、漏登记、摘要警告、重复/死链",
+        "ok; missing fails; summary warns; duplicate/dead fail",
+        code_bad,
+        "\n---\n".join([out_ok, out_missing, out_warn, out_bad]),
+        "\n---\n".join([err_ok, err_missing, err_warn, err_bad]),
+        ok_valid and ok_missing and ok_warn and ok_bad,
+    )
+
+
 def case_check_sidecar_schema_bool() -> None:
     root = make_root()
     snap, sha, _ = fingerprint(root, ["src/login.ts"])
@@ -1602,6 +2018,7 @@ def _run_tests() -> int:
         case_check_project_root_mismatch,
         case_fingerprint_empty_scope,
         case_root_scope_new_file,
+        case_root_scope_declared_default,
         case_check_empty_sidecar,
         case_check_legacy_root_scope,
         case_list_handover_symlink_outside,
@@ -1634,6 +2051,16 @@ def _run_tests() -> int:
         case_check_matched_scope_report,
         case_directory_sibling_status_unchanged,
         case_task_body_edit_not_detected,
+        case_task_lint_and_seal,
+        case_task_lint_minimum_contract,
+        case_reseal_after_edit,
+        case_check_body_hash_integrity,
+        case_goal_guard,
+        case_entry_lint,
+        case_relative_task_file_from_subdir,
+        case_seal_task_symlink_refused,
+        case_invalid_scope_root_mode,
+        case_scope_root_mode_config,
         case_check_sidecar_schema_bool,
         case_analysis_json_no_content_leak,
         case_analysis_explicit_session_strict,
@@ -1658,7 +2085,7 @@ def _run_tests() -> int:
             )
 
     passed = sum(1 for case in CASES if case["passed"])
-    print("# v1.1.2 Fixture Test Results")
+    print("# v1.2.0 Fixture Test Results")
     print("")
     print("- Date (UTC): %s" % datetime.now(timezone.utc).isoformat(timespec="seconds"))
     try:

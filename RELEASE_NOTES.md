@@ -1,3 +1,22 @@
+# handover v1.2.0
+
+- Date: 2026-11-16
+- Status: **v1.2.0** — quality-sealing and goal-guard release over `v1.1.2`; validated in controlled environments, not a real-business guarantee.
+- Install: copy `handover/` to `~/.claude/skills/handover/`; back up any existing skill first.
+- Package integrity: `handover/SHA256SUMS.txt` covers the 17 skill package files.
+- Minimum handover contract: `task-lint`/`seal` require 目标+当前阶段, 验收/完成判定, a progress-state marker, and a concrete next-step action for active tasks.
+- `seal` validates the task document and writes `body_sha256`/`goal_sha256`; `task-lint --require-seal --require-project-context` independently re-checks required sections and the 6k token ceiling.
+- `check` reports `task_body`/`task_goal`; a post-seal edit returns exit 3 (`integrity: changed`) without conflating it with a worktree change.
+- `goal-guard` blocks a goal change on an existing active task unless `--goal-change-authorised` is provided; save records the authorization in `决策与尝试`.
+- `entry-lint` checks `handover.md` task links for dead/duplicate/outside-root links, unlisted task files, and summary-style entry lines; `references/entry-template.md` defines the canonical no-summary entry format.
+- Task template adds `## 项目上下文（引用，不复制）` and `## 未复核与陈旧标记`; load reports project context, rules source, and unverified claims, and stops on conflicting instructions.
+- Root scope defaults to `declared`; new untracked root files become `out_of_scope_changes` instead of flipping `consistency` to changed. `direct` restores the old behavior; `tracked` covers tracked root edits.
+- `SKILL.md` moves token-hygiene detail to `references/token-hygiene.md` to stay under 12KB.
+- Fixture suite: 93/93 PASS. Headless E2E: save/seal/lint, fresh load body/goal matched, explicit goal change, conflict refusal, body tamper exit 3, root-noise matched, rules-heavy load, exact `/handover` load/save after global install. A short `/compact` A/B retained task facts in both branches; handover additionally separated historical test evidence from current verification. Details in `handover/E2E_TEST_RESULTS.md`.
+- Not verified: real business projects; real 1.0.0 artifacts; concurrency; interactive permission modes; archive/restore failure modes; long-context `/compact` A/B.
+
+---
+
 # handover v1.1.2
 
 - Date: 2026-11-03

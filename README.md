@@ -2,7 +2,7 @@
 
 A Claude Code skill for carrying task state across sessions: manually **save** a verified handover, then **load** it in a fresh session or a parallel task.
 
-> Status: **v1.1.2**. Static validation, 82/82 fixture cases, and a headless save → fresh load → modify → load → save E2E pass. The main matrix used a project-local copy renamed to `handover-v112`; after replacing the global v1.1.1 copy with v1.1.2, the exact `/handover` chain was re-checked and passed. Focused acceptance also passed under Python 3.9, non-git projects, helper-missing degradation, archive/restore target conflicts, archive entry-update failure, and read-budget checks. Real business projects, actual 1.0.0 artifacts, concurrency, interactive permission modes, other archive/restore failure modes, and the full 122-item checklist remain untested.
+> Status: **v1.2.0**. Adds deterministic task-body sealing (`seal` + `body_sha256`/`goal_sha256`), `task-lint`, `goal-guard`, `entry-lint`, project-context and unverified-claim sections, and a `declared` root-scope default. Static validation and 93/93 fixture cases pass; a headless save → fresh load → goal change → conflict-refusal chain passed in a temporary project. Real business projects, actual 1.0.0 artifacts, concurrency, interactive permission modes, and other archive/restore failure modes remain untested.
 
 ## Why
 
@@ -107,17 +107,17 @@ Current results:
 | Layer | Result |
 |---|---|
 | Static/structural (`VALIDATION.md`) | PASS, no errors |
-| Script fixtures (`FIXTURE_TEST_RESULTS.md`) | 82/82 PASS |
-| v1.1.2 headless E2E (`E2E_TEST_RESULTS.md`) | PASS: save → fresh load (read-only) → modify → load (`changed`) → save (`matched`); completed guard, legacy migration branch, archive/restore, list, brief, `--out` and `analysis` probes |
-| v1.1.2 exact `/handover` install | PASS: global v1.1.1 backed up and replaced with v1.1.2; the same chain passed in a new project with no project-level skill |
-| v1.1.2 focused acceptance | PASS: Python 3.9 static + 82/82 fixtures; non-git (`overall: partial`, `check: unknown`); helper-missing; archive/restore target conflicts; missing-sidecar archive; archive entry-update failure; brief/load budgets |
-| v1.1.1 headless save/load smoke | PASS; historical evidence |
-| v1.1.1 status-selection smoke | PASS; historical evidence |
-| Real Claude Code E2E (rc.1 minimal save/load/change) | PASS after a scope fix; historical evidence |
-| Controlled fixture acceptance (rc.1: no-ID load, multi-turn, A/B isolation, archive/restore, 1.0-style migration) | PASS in temporary projects/fixtures; not rerun for v1.1.1 or v1.1.2 |
-| Real business project, real 1.0.0 artifact, concurrency/real permission modes, full 122-item checklist | Not executed |
+| Script fixtures (`FIXTURE_TEST_RESULTS.md`) | 93/93 PASS |
+| v1.2 headless E2E (`E2E_TEST_RESULTS.md`) | PASS: save with `seal`/`task-lint`/`goal-guard`; fresh load with body/goal matched; goal change via explicit authorization; conflict instruction refused; `check` body tamper exit 3; root-scope noise remains matched |
+| v1.2 exact `/handover` install | PASS: global v1.1.2 backed up and replaced with v1.2.0; exact `/handover` load and save passed in the temporary project |
+| v1.2 short `/compact` A/B | PASS (one short run): both branches retained task facts; handover separated historical test evidence from current verification |
+| v1.2 rules-heavy load | PASS: 25 rules, 5 Critical; goal/progress/next preserved; sources attributed |
+| v1.2 entry-lint | PASS: 3 tasks / 3 linked; summary/long-line warnings surfaced |
+| v1.1.2 headless E2E (historical) | PASS: save → fresh load (read-only) → modify → load (`changed`) → save (`matched`); completed guard, legacy migration branch, archive/restore, list, brief, `--out` and `analysis` probes |
+| v1.1.2 focused acceptance (historical) | PASS: Python 3.9 static + 82/82 fixtures; non-git (`overall: partial`, `check: unknown`); helper-missing; archive/restore target conflicts; missing-sidecar archive; archive entry-update failure; brief/load budgets |
+| Real business project, real 1.0.0 artifact, concurrency/real permission modes, full checklist | Not executed |
 
-`VALIDATION.md`, `FIXTURE_TEST_RESULTS.md`, and the v1.1.2 section of `E2E_TEST_RESULTS.md` are the current v1.1.2 records. `E2E_TEST_RESULTS.md` also preserves the v1.1.0-rc.1 record as history. Controlled fixture acceptance is not a real-project trial.
+`VALIDATION.md`, `FIXTURE_TEST_RESULTS.md`, and the v1.2 section of `E2E_TEST_RESULTS.md` are the current v1.2.0 records. `E2E_TEST_RESULTS.md` also preserves the v1.1.2 and v1.1.0-rc.1 records as history. Controlled fixture acceptance is not a real-project trial.
 
 `SHA256SUMS.txt` verifies file digests only; it does not prove logic, installation, permissions, or safety.
 
@@ -125,9 +125,11 @@ Current results:
 
 - Archive/restore are instruction-based, not scripted; the v1.1.2 headless E2E exercised the happy path, but real file-move failure behavior is still being validated.
 - `SKILL.md` routes to `references/`, and `references/save.md` points to `references/task-template.md`. The v1.1.2 headless E2E exercised the reference-routed save/load/change chain; template reading still deserves a separate check after any installation change.
-- The fingerprint covers declared files plus relevant git state; it does not prove the whole project is consistent. Content hashes cover only explicitly listed files; directory scope only filters git status entries. `matched` also does not hash the task body. `matched` output reports out-of-scope change counts, but that is transparency, not full-project verification.
-- v1.1.2 fixes are covered by fixtures and a headless E2E: arbitrary `--out` overwrite refusal, no system/tool content in `analysis`, schema/project_root validation in `status-guard`, an explicit legacy-migration branch, Git error classification in `ignore-check`, strict transcript selection, restricted frontmatter parsing, bool-schema and duplicate-ID handling in `list`, config symlink boundaries, reserved task IDs, and coverage reporting. Focused acceptance covered Python 3.9, non-git projects, helper-missing degradation, restore/archive conflicts, archive entry-update failure, and read budgets. The main matrix used a renamed project-local copy; the exact `/handover` name was re-checked after replacing the global copy with v1.1.2. It is still one environment; real business projects, concurrency, interactive permissions, and other archive/restore failure modes (for example a cross-device move) remain untested.
+- The fingerprint covers declared files plus relevant git state; it does not prove the whole project is consistent. Content hashes cover only explicitly listed files; directory scope only filters git status entries. `body_sha256`/`goal_sha256` detect post-seal edits, but they do not prove the narrative matches the code or that the task was not edited before sealing.
+- v1.2 quality checks are helper-enforced when the save protocol runs them: `seal`, `task-lint`, and `goal-guard` are deterministic commands, but the skill is still prompt-based, so a model that skips a command is not blocked by a harness hook.
+- v1.1.2 fixes remain covered by fixtures and historical E2E: arbitrary `--out` overwrite refusal, no system/tool content in `analysis`, schema/project_root validation in `status-guard`, an explicit legacy-migration branch, Git error classification in `ignore-check`, strict transcript selection, restricted frontmatter parsing, bool-schema and duplicate-ID handling in `list`, config symlink boundaries, reserved task IDs, and coverage reporting.
 - The skill is a prompt-based skill, not a background service or a deterministic state machine.
+- Deliberately not in v1.2.0: a concurrency write lock (single-user manual workflow; safe writes plus conflict reporting only) and scripted archive/restore moves (the instruction-based record-group rules remain; scripting file moves was judged too risky for this patch).
 
 ## License
 

@@ -1,7 +1,66 @@
 # Claude Code E2E Test Results
 
-- Current record: v1.1.2 (2026-11-03)
-- Historical record: v1.1.0-rc.1 (2026-11-02), preserved below.
+- Current record: v1.2.0 (2026-11-16)
+- Historical records: v1.1.2 (2026-11-03), v1.1.0-rc.1 (2026-11-02), preserved below.
+
+## v1.2.0 headless E2E
+
+- Date: 2026-11-16
+- Version: v1.2.0
+- Claude Code: 2.1.325
+- Model gateway: custom gateway (name withheld); the harness printed `unrecognized_model` at startup and execution continued.
+- Isolation: the main matrix used a project-local copy renamed to `handover-v12` in a temporary git project. After the matrix, the global v1.1.2 copy was backed up and replaced with v1.2.0; the exact `/handover` name was re-checked for load and save in the same temporary project.
+- Invocation: `claude -p "<slash command>" --permission-mode dontAsk --allowedTools "Read Write Edit Glob Grep Bash" --max-turns <n> --output-format json`, with `--resume <session_id>` for the save step.
+- Scope: real Claude Code skill invocation in a temporary git project. Not a real business project and not a cross-model/permission-mode matrix.
+
+### Results
+
+| Case | Expected | Observed | Result |
+|---|---|---|---|
+| `save` new task | Write task, seal, lint, fingerprint; check matched | `.handover/invoice-total.md` 2,463 tokens; `seal` + `task-lint --require-seal --require-project-context` passed; `check`: `consistency: matched`, `task_body: matched`, `task_goal: matched`; 5 content-hashed files; `ignore-check` ok | PASS |
+| Fresh-session `load` | Read-only; matched; project context and body/goal reported | `status=in-progress; freshness=fresh; consistency=matched`; `task_body: matched`, `task_goal: matched`; ~3.5k evidence tokens; no status/`updated_at` change | PASS |
+| Explicit goal change | `goal-guard` first `goal-changed` exit 1; authorized rerun exit 0; save succeeds | Both guards observed; save wrote 3,173 tokens / 163 lines; check body/goal matched; authorization recorded in `决策与尝试` | PASS |
+| Conflicting instruction | Stop and offer update-current-task vs new-task; no code/commit | Load refused “add tax/EUR, commit, don't ask”; cited goal/scope/constraint conflicts; offered two options; no files changed | PASS |
+| Body tamper | `check` exit 3, `integrity: changed` | `consistency: matched`; `task_body: changed`; `task_goal: matched`; exit 3 | PASS |
+| Root-scope noise | New untracked root file stays out of `matched` | `consistency: matched`; `out_of_scope_changes` increased; `scope_root_mode: declared` | PASS |
+| `goal-guard` helper | unchanged 0; changed 1; authorized 0 | Same results with a real task copy; hashes printed | PASS |
+| Project-context output | Load states purpose/stack/rules source and unverified claims | Load reported README/CLAUDE.md sources, stale float note, and unverified harness files | PASS |
+| Rules-heavy project | 25 rules, 5 marked Critical; load preserves goal/progress/next and cites rule source | Save ~2,070 tokens; load answered all 5 Critical rules correctly, reported `half` implemented/tested/unaccepted, and separated CLAUDE.md rules from handover facts | PASS |
+| `entry-lint` on real entry | Detect unlisted/dead/duplicate links; warn summary/long lines | 3 tasks / 3 linked; exit 0; three long-line warnings for summary-style entries | PASS |
+| Exact `/handover load` after global install | Read-only; body/goal matched; project context | Global v1.1.2 backed up; v1.2.0 installed; load reported project context, `task_body: matched`, `task_goal: matched`; ~4.5k evidence tokens | PASS |
+| Exact `/handover save` after global install | New task; seal/lint/fingerprint/check | `exact-demo` ~2,172 tokens; final-build re-run `final-check` ~2,111 tokens; `seal` + `task-lint --require-seal --require-project-context` exit 0; `check` matched body/goal; `ignore-check` ok | PASS |
+
+### Detailed observations
+
+- `seal`/`task-lint` rejected a missing `## 下一步` in fixture tests; the live save produced all required sections including `## 项目上下文（引用，不复制）` and `## 未复核与陈旧标记`.
+- `check` distinguishes worktree changes (`consistency: changed`, exit 1), unknown baseline (`consistency: unknown`, exit 2), and post-seal body changes (`integrity: changed`, exit 3).
+- The conflicting-instruction case is the key behavioral change from v1.1.2: the model did not plan to fold tax/EUR/commit into the current task; it stopped and offered update-vs-new-task.
+- The explicit goal-change case used a direct "目标变更：...改为..." instruction, which the protocol treats as authorization; the save recorded it. An indirect "顺便做 X" is expected to be refused (covered by the conflict case).
+- Root-scope default `declared` keeps new untracked root files out of `matched`; `out_of_scope_changes` still reports them.
+
+### Small `/compact` A/B (2026-11-16)
+
+Two isolated copies of the same temporary project received the same coding prompt (implement `total_cents`, leave `format_total` for next session, integer cents, no float, no commit). Branch A used `/compact keep` with the goal/constraints/progress/next-step/stale-note list; branch B used `/handover save` and a fresh `/handover load`. The same seven questions were asked afterward (project purpose, stack, goal/acceptance, progress, next step, superseded claims, current tests).
+
+| Dimension | A: `/compact` | B: `/handover` |
+|---|---|---|
+| Project purpose/stack | Correct | Correct |
+| Goal/acceptance | Correct | Correct |
+| Progress | Correct | Correct |
+| Next step | Correct | Correct |
+| Superseded float note | Correct | Correct |
+| Current test result | Stated 4/4 as current | Stated 4/4 as historical evidence, not current verification |
+| Source/verification discipline | Lower: no file/hash boundary | Higher: cites handover sections and `check` status |
+
+This is a short-session, one-run comparison, not evidence that compact loses content. In this run compact retained the task facts. The handover advantage observed was **verifiability and historical/current separation**, not superior recall; compact remains the lower-overhead option for same-session continuation. A long-context, repeated A/B is still needed to test the original "compact loses content" premise.
+
+### Limitations
+
+- One Claude Code version, one model/gateway; not a cross-model guarantee.
+- The exact global `/handover` load/save smoke passed after installing v1.2.0; the main matrix still used the renamed project-local copy.
+- No real business project, real 1.0.0 artifact, concurrency, interactive permission mode, or archive/restore re-run.
+- The `/compact` A/B is one short session per branch; it does not reproduce a long-context loss scenario.
+- Helper commands are deterministic when invoked, but the skill remains prompt-based; a model that skips `seal`/`task-lint`/`goal-guard` is not blocked by a harness hook.
 
 ## v1.1.2 headless E2E
 

@@ -16,23 +16,36 @@ fingerprint_file: .handover/<task-id>.fingerprint.json
 fingerprint_sha256: null
 fingerprint_scope: relevant-files+git
 fingerprint_checked_at: null
+body_sha256: null
+goal_sha256: null
 ---
 
 # <任务标题>
 
 > 状态默认：新建任务用 `in-progress`。`completed` 只在用户明确确认完成且验收证据存在时使用；`save`、`/clear`、context 阈值、测试通过都不等于完成确认。声明与证据冲突时用 `blocked`。
 >
-> 读取预算：任务文档建议 ≤ 200 行 / ≤ 4k tokens；只写代码/git 里读不到的 delta。`load` 默认只读“快速接手摘要 + 当前进度 + 下一步 + 并行与依赖”，其余按需。
+> 读取预算：任务文档建议 ≤ 200 行 / ≤ 4k tokens；`task-lint` 在超过 6k tokens 时失败。只写代码/git 里读不到的 delta。`load` 默认只读“项目上下文 + 快速接手摘要 + 当前进度 + 下一步 + 并行与依赖”，其余按需。
 >
 > Token 卫生：只写高信号 delta；单空行、无装饰分隔线、无行尾空格；避免宽表格；不粘贴代码/diff；必要的空格和标点不要删。同一状态/风险/验证命令只写一处；跨文件重复优先用引用。
 >
 > Frontmatter：受限扁平 YAML，每行一个 `key: value`；不支持嵌套、序列、锚点/标签、块标量或多行值。值含 `#` 或 `: ` 时用引号；重复键、缩进行、未闭合引号是解析错误。
+>
+> 封存：正文写完后运行 `scripts/handover.py seal`，它校验必需章节并写入 `body_sha256` / `goal_sha256`；`check` 会报告 `task_body` / `task_goal`，正文被改写时返回 exit 3。
 
 ## 阅读指引
-- `load` 默认读取：快速接手摘要、当前进度、下一步、并行与依赖。
+- `load` 默认读取：项目上下文、快速接手摘要、当前进度、下一步、并行与依赖。
 - 其他章节（验证证据、决策与尝试、已尝试方案等）按需读取。
 - “接手必读”只写索引，不写整文件清单。
 - 详细读取预算见 [SKILL.md](../SKILL.md) 与 [brief-load.md](brief-load.md)。
+
+## 项目上下文（引用，不复制）
+只写 3–5 行；详细规则放 `CLAUDE.md`/README，不复制全文。
+
+- 用途：
+- 技术栈：
+- 规则来源：
+- 本次核对：
+- 规则冲突/过期：
 
 ## 快速接手摘要（≤ 20 行）
 不要逐字重复 frontmatter 的 status；只写新会话必须知道的变化。
@@ -53,6 +66,9 @@ fingerprint_checked_at: null
 
 ## 当前进度
 分别记录已实现、已验证、已验收；进行中、待办、阻塞、等待、暂停、取消。没有证据就标记未验证。不重复快速摘要；只写细节、差异和证据。
+
+## 未复核与陈旧标记
+列出本次保存时**没有重新验证**的旧结论、旧进度、外部决策或依赖，以及它们为何仍被保留。没有就写“无”。`load` 必须把这些项标为未复核，不得当作当前事实。
 
 ## 代码与运行现场
 相关文件与符号、修改目的、暂存/未暂存/未跟踪状态、修改归属、临时代码、环境前提。服务与进程只记录最后观察状态。
@@ -87,4 +103,4 @@ fingerprint_checked_at: null
 仅在确认该 Skill 存在时记录，例如 `/tdd`、`/code-review`，并写明原因；不要假定一定可用。
 
 ## 指纹说明
-`snapshot_id` / `fingerprint_file` / `fingerprint_sha256` 由 `scripts/handover.py fingerprint` 生成，并由 `check` 核对三者是否属于同一次保存。指纹包含声明文件的内容 SHA-256 与相关 git 现场（branch/HEAD/status）；内容哈希只覆盖明确列出的文件，目录范围只筛选 git status，不代表目录内所有文件都被哈希。`check` 不计算正文摘要，单独修改正文不会自动变成 unknown。默认排除 `.handover/`、`handover.md`、`.claude/` 和 `.git/`。脚本不可用、路径不可读、文件过大或无 git 基线时保持为 null，`consistency` 必须为 unknown；不得用 branch/HEAD 代替内容指纹。归档时任务 Markdown 与同 stem 的 `.fingerprint.json` 作为同一记录组移动，不重新生成基线。模板中的示例日期仅作格式示例，不要原样复制到真实任务。
+`snapshot_id` / `fingerprint_file` / `fingerprint_sha256` 由 `scripts/handover.py fingerprint` 生成，并由 `check` 核对三者是否属于同一次保存。指纹包含声明文件的内容 SHA-256 与相关 git 现场（branch/HEAD/status）；内容哈希只覆盖明确列出的文件，目录范围只筛选 git status，不代表目录内所有文件都被哈希。`body_sha256` / `goal_sha256` 由 `seal` 写入，覆盖任务正文和目标章节；`check` 报告 `task_body` / `task_goal`，正文或目标被改写时返回 exit 3（integrity changed），但不会把正文编辑伪装成现场 `changed`。默认排除 `.handover/`、`handover.md`、`.claude/` 和 `.git/`。脚本不可用、路径不可读、文件过大或无 git 基线时保持为 null，`consistency` 必须为 unknown；不得用 branch/HEAD 代替内容指纹。归档时任务 Markdown 与同 stem 的 `.fingerprint.json` 作为同一记录组移动，不重新生成基线；`body_sha256` / `goal_sha256` 保持不变。模板中的示例日期仅作格式示例，不要原样复制到真实任务。

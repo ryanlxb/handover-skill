@@ -29,7 +29,7 @@
 
 ## YAML frontmatter
 
-至少包含：`schema`、`snapshot_id`（可空）、`task_id`、`title`、`status`、`updated_at`（ISO 8601 含时区或 null）、`migrated_at`（可空）、`archived_at`（可空）、`restored_at`（可空）、`project_root`、`branch`、`head`、`worktree`、`fingerprint_file`（可空）、`fingerprint_sha256`（可空）、`fingerprint_scope`（默认 relevant-files+git）、`fingerprint_checked_at`（可空）。
+至少包含：`schema`、`snapshot_id`（可空）、`task_id`、`title`、`status`、`updated_at`（ISO 8601 含时区或 null）、`migrated_at`（可空）、`archived_at`（可空）、`restored_at`（可空）、`project_root`、`branch`、`head`、`worktree`、`fingerprint_file`（可空）、`fingerprint_sha256`（可空）、`fingerprint_scope`（默认 relevant-files+git）、`fingerprint_checked_at`（可空）、`body_sha256`（可空）、`goal_sha256`（可空）。
 
 - frontmatter 使用受限的扁平 YAML：每行一个 `key: value`，不支持嵌套、序列、锚点/别名/标签、块标量或多行值。重复键、缩进行、缺少 `: ` 分隔符、未闭合引号等是解析错误 → unknown，不静默忽略。
 - 行内注释 `# ...` 在引号外且前面是空白时会被移除。值本身包含 `#` 或 `: ` 时用引号包裹（如 `title: "Fix: login"`）；数值字段（`schema`、`stale_after_days`）按十进制数字校验，其他全数字值保持字符串，避免 task-id/commit hash 被误转成整数。
@@ -38,7 +38,18 @@
 - 日期必须是含时区的 ISO 8601 字符串；否则视为无效。
 - `schema` 是文件格式版本，不是 Skill 版本；未支持的 schema 只读并告警，不自动降级覆盖。
 - `stale_after_days` 必须是合法正整数；无效配置告警后使用默认 14。
-- 模板中的示例日期仅作格式示例，不得原样写入真实任务。
+- `scope_root_mode`：`direct`/`declared`（默认）/`tracked`；控制根目录 git 状态范围：direct 全部直属条目，declared 仅显式声明文件，tracked 额外含已跟踪条目修改；新未跟踪根目录文件计为范围外。无效值告警并使用默认。
+
+## 任务正文完整性（body_sha256 / goal_sha256）
+
+- `seal` 在任务正文写完后运行：校验必需章节、状态、frontmatter 和 token 上限，然后把 `body_sha256`（frontmatter 之后的完整正文）与 `goal_sha256`（规范化后的 `## 目标与边界` 章节）写入 frontmatter。
+- `task-lint --require-seal` 独立复核；`check` 报告 `task_body` / `task_goal`：
+  - `matched`：正文/目标与 frontmatter 哈希一致；
+  - `changed`：seal 后正文/目标被改写，`consistency` 仍可能是 matched，但 `check` 返回 **exit 3**（integrity changed）；
+  - `unknown`：旧任务没有 `body_sha256` / `goal_sha256`，不声称完整。
+- `body_sha256`/`goal_sha256` 只证明“与 seal 时一致”，不证明正文语义正确；仍要对照代码现场和用户要求。
+- `seal` 不改变 `updated_at`、status、snapshot 绑定；归档/恢复时这两个字段随任务保留，不重新生成。
+- `goal-guard --old-file <old> --new-file <new>` 比较两个任务的 `## 目标与边界` 规范化哈希：`goal-unchanged` exit 0；`goal-changed` exit 1；`goal-change-authorised` exit 0。save 在覆盖 active 任务前必须运行它。
 
 ## 状态、freshness、consistency
 
@@ -47,10 +58,10 @@
 - `status-guard` 校验 task_id、schema、project_root 和 status。exit 0 只表示身份/格式/状态允许复用，不是写锁，也不校验正文。旧 1.0.0 记录（无 frontmatter）默认 exit 2；只有显式使用 `status-guard --legacy-migration` 且文件是可识别的 Markdown 旧记录时返回 exit 3（`legacy-migration-required`）。迁移 frontmatter、回读后必须重新运行不带该参数的 `status-guard`，exit 0 才能继续写入；损坏、未闭合 frontmatter、非 Markdown 或未支持 schema 仍 exit 2。
 - `freshness`：fresh / stale / unknown。age = now - updated_at；age >= stale_after_days 为 stale；age < stale_after_days 为 fresh；updated_at 为 null、无效或未来时间等异常为 unknown。stale 只表示需要复核，不覆盖 status，不触发删除。
 - `consistency`：matched / changed / unknown，在 load 或 save 的 `check` 步骤中计算。必须先核对任务 frontmatter 的 `schema`、`task_id`、`project_root`、`snapshot_id`、`fingerprint_file`、`fingerprint_sha256` 与当前项目/sidecar 一致；任一缺失或不匹配 → unknown。
-- `check` 只核对 frontmatter 与 sidecar 绑定，不计算任务正文摘要。单独修改正文不会自动变成 unknown；只有 save 更新/清空绑定字段，或用新的 sidecar 覆盖时，旧正文才不再匹配。
+- `check` 先核对 frontmatter 与 sidecar 绑定，再核对 `body_sha256`/`goal_sha256`；正文/目标被改写时 `consistency` 可仍为 matched，但 `check` 返回 exit 3（integrity changed）。旧任务没有 seal 字段时 `task_body`/`task_goal` 为 unknown，不声称完整。
 - 指纹包含两部分：声明文件的内容 SHA-256，以及相关范围的 git 现场（branch、HEAD、status 条目）。声明范围 = 任务相关文件 + “接手必读”路径 + 显式提到的路径 + 这些路径所在目录；排除 `.handover/`、`handover.md`、`.claude/` 和 `.git/`。
 - 内容哈希只覆盖 `files` 中明确列出的文件。目录范围只筛选 git status，不对目录内未列出的文件做内容哈希；同目录未声明文件的内容变化若没有改变 git 状态条目，可能不被发现。
-- 目录范围：子目录按子树覆盖；项目根目录按直属文件覆盖（不递归），避免一个根目录文件把整个仓库都算进 matched。`--scope-dir .` 表示根目录直属文件。
+- 目录范围：子目录按子树覆盖；根目录由 `scope_root_mode` 控制：`direct` 匹配所有根目录直属条目；`declared`（默认）只匹配显式声明的根目录文件；`tracked` 额外匹配已跟踪根目录条目的修改。`--scope-dir .` 表示根目录直属文件。
 - 没有任何可声明文件时不得生成空基线；`fingerprint` 返回错误，consistency 为 unknown。
 - 当前版本默认排除整个 `.claude/`：这表示 `.claude/` 下的项目配置变化不在一致性检查范围内，不等于断言所有项目配置都不属于任务现场；后续版本可考虑允许显式纳入与任务相关的配置。
 - git 现场覆盖声明范围内的新增、删除、重命名、暂存/未暂存状态变化；范围外的改动只计数，不参与 matched 判断。
@@ -78,6 +89,7 @@
 ## 旧文件与格式迁移
 
 - 只迁移当前 save 的任务；不批量改写。
+- v1.2 新增 seal 字段与项目上下文/未复核章节；旧任务未 seal 时 `task_body`/`task_goal` 为 unknown，`task-lint` 可能因超 6k 或缺章节失败。只在下一次 save 升级当前任务。
 - 迁移流程：先运行 `status-guard --legacy-migration` 识别。只有 exit 3（可识别的无 frontmatter Markdown 旧记录）才进入迁移；补 frontmatter 后回读校验 schema/task_id/project_root/status；再运行不带该参数的 `status-guard`，exit 0 才能继续 save。exit 2 表示损坏、未闭合 frontmatter、非 Markdown 或未支持 schema，停止；不要用 `--legacy-migration` 绕过。
 - 迁移只补 frontmatter，不改变任务状态，不把旧记录“洗新”：
   - 能可靠解析旧更新时间则保留；否则 `updated_at = null`，freshness = unknown。

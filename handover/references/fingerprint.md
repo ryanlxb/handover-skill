@@ -3,10 +3,13 @@
 ## 指纹（可选脚本）
 
 - 优先使用 Skill 安装目录下的脚本；用 harness 在 Skill 内容开头给出的 base directory 拼绝对路径，替换下面的 `<skill-dir>`：
-  - `python3 -I "<skill-dir>/scripts/handover.py" fingerprint --root <root> --task <id> --paths <paths-file> [--snapshot-id <id>] [--scope-dir <dir> ...]`：写入 `.handover/<id>.fingerprint.json`，输出 `snapshot_id`、sidecar SHA-256、文件与 git 状态。
-  - `python3 -I "<skill-dir>/scripts/handover.py" check --root <root> --task <id> --task-file <task.md> [--expected-sha256 <hash>]`：先核对任务 frontmatter 与 sidecar 的 `snapshot_id`/`fingerprint_file`/`fingerprint_sha256`，再重新计算文件与 git 现场，返回 matched/changed/unknown。
+  - `python3 -I "<skill-dir>/scripts/handover.py" fingerprint --root <root> --task <id> --paths <paths-file> [--snapshot-id <id>] [--scope-dir <dir> ...] [--scope-root-mode direct|declared|tracked]`：写入 `.handover/<id>.fingerprint.json`，输出 `snapshot_id`、sidecar SHA-256、文件与 git 状态。`--scope-root-mode` 覆盖 config；默认 `declared`。
+  - `python3 -I "<skill-dir>/scripts/handover.py" seal --root <root> --task <id> --task-file <task.md> [--require-project-context] [--max-tokens N]`：校验必需章节/状态/frontmatter，写入 `body_sha256`/`goal_sha256`；不改变正文、status 或 snapshot 绑定。
+  - `python3 -I "<skill-dir>/scripts/handover.py" task-lint --root <root> --task <id> --task-file <task.md> [--require-seal] [--require-project-context] [--max-tokens N]`：只读校验；缺章节/正文为空/哈希不匹配/token 超限时 exit 1。
+  - `python3 -I "<skill-dir>/scripts/handover.py" goal-guard --root <root> --task <id> --old-file <old> --new-file <new> [--goal-change-authorised]`：比较 `## 目标与边界`；goal-changed exit 1，authorised exit 0。
+  - `python3 -I "<skill-dir>/scripts/handover.py" check --root <root> --task <id> --task-file <task.md> [--expected-sha256 <hash>]`：先核对任务 frontmatter 与 sidecar 的 `snapshot_id`/`fingerprint_file`/`fingerprint_sha256`，再重新计算文件与 git 现场，并报告 `task_body`/`task_goal`。exit 0 = matched；1 = changed；2 = unknown；3 = integrity changed（正文/目标哈希不匹配）。
 - 如果无法确定 Skill 安装目录，按 `.claude/skills/handover/scripts/handover.py` 或用户实际安装目录解析；不要把相对路径当作项目路径。
-- `snapshot_id` 只绑定任务 frontmatter 与 sidecar，不是正文内容哈希。保存流程更新或清空 `snapshot_id`/`fingerprint_sha256` 时，旧记录才会不匹配 → unknown；如果只改任务正文并保留原 frontmatter/sidecar，`check` 仍可能返回 matched。不要把 matched 当作正文未被改写的证明。
+- `snapshot_id` 只绑定任务 frontmatter 与 sidecar，不是正文内容哈希；正文完整性由 `body_sha256`/`goal_sha256` 单独覆盖。只改正文并保留原 frontmatter/sidecar 时，`check` 的 `consistency` 仍可能 matched，但 `task_body` 会变成 changed 并返回 exit 3。
 - `check` 要求任务 frontmatter 的 `schema`、`task_id`、`project_root`、`snapshot_id`、`fingerprint_file`、`fingerprint_sha256` 全部存在且与当前项目/sidecar 一致；任一缺失或不匹配 → unknown。不要用“文件里有 sidecar 路径”代替完整绑定。
 - 指纹生成后必须再运行一次 `check`，确认检查时现场与刚生成的基线一致，并确认任务文件与 sidecar 的 `snapshot_id`/SHA 绑定一致；若返回 changed，报告“检查时现场与基线不一致”，不要宣称干净保存。`check` 不证明正文语义与代码一致，也不证明从读取代码到写入正文期间代码未变。
 - 脚本不可用、无法确定相关文件或任一相关文件不可读时，`snapshot_id`/`fingerprint_file`/`fingerprint_sha256` 置 null，consistency 必须为 unknown；不得用 branch/HEAD 代替内容指纹。
@@ -19,8 +22,8 @@
 ### 指纹范围
 
 - 声明范围 = 任务相关文件 + “接手必读”路径 + 显式提到的路径 + 这些路径所在目录。
-- 目录范围：子目录按子树覆盖；项目根目录按直属文件覆盖（不递归），避免一个根目录文件把整个仓库都算进 matched。需要更宽范围时显式传 `--scope-dir`，`.` 表示根目录直属文件。
-- 兼容 v1.1.0 sidecar：若声明了根目录文件但 sidecar 没有 `.`，`check` 会保守地补上根目录直属范围；新 `save` 会显式记录。旧 sidecar 可能因此从 matched 变为 changed，重新 save 一次即可更新基线。
+- 目录范围：子目录按子树覆盖；根目录由 `scope_root_mode` 控制。`direct` 匹配所有根目录直属条目（旧行为）；`declared`（默认）只匹配显式声明的根目录文件，新未跟踪根目录文件计为 `out_of_scope_changes`；`tracked` 额外匹配已跟踪根目录条目的修改。需要更宽范围时显式传 `--scope-dir` 或 `--scope-root-mode direct`。
+- 兼容 v1.1.0 sidecar：若 sidecar 没有 `scope_root_mode`，`check` 按旧 `direct` 行为处理，并在需要时补 `.`；新 `save` 会显式记录模式。旧 sidecar 可能因此从 matched 变为 changed，重新 save 一次即可更新基线。
 - 排除 `.handover/`、`handover.md`、`.claude/` 和 `.git/`。
 - 当前版本默认排除整个 `.claude/`：这表示 `.claude/` 下的项目配置变化不在一致性检查范围内，不等于断言所有项目配置都不属于任务现场；后续版本可考虑允许显式纳入与任务相关的配置。
 - git 现场覆盖声明范围内的新增、删除、重命名、暂存/未暂存状态变化；范围外的改动只计数，不参与 matched 判断。`matched` 输出会报告范围外变化计数（`out_of_scope_changes`），避免把“声明范围一致”误读为“整个项目无变化”。

@@ -8,8 +8,8 @@ A Claude Code skill package for cross-session task handover, plus a stdlib-only 
 
 - `handover/` is the installable skill. Install it by copying the folder to `~/.claude/skills/handover/` or `<project>/.claude/skills/handover/`.
 - `handover/SKILL.md` is the model-facing protocol; `handover/README.md` is the human-facing usage and boundary document.
-- `handover/references/` holds the task template plus mode-specific details (`brief-load.md`, `save.md`, `archive-restore.md`, `data-model.md`, `fingerprint.md`). `SKILL.md` is the lightweight router; load only the mode reference you need.
-- `handover/scripts/handover.py` is an optional helper with `list`, `fingerprint`, `check`, `status-guard`, `ignore-check`, `stats`, and `analysis`.
+- `handover/references/` holds the task template plus mode-specific details (`brief-load.md`, `save.md`, `archive-restore.md`, `data-model.md`, `fingerprint.md`, `token-hygiene.md`, `entry-template.md`). `SKILL.md` is the lightweight router; load only the mode reference you need.
+- `handover/scripts/handover.py` is an optional helper with `list`, `fingerprint`, `check`, `status-guard`, `ignore-check`, `task-lint`, `seal`, `goal-guard`, `stats`, and `analysis`.
 - `tests/` validates the package and helper; it does not execute the skill.
 - `handover/VALIDATION.md`, `FIXTURE_TEST_RESULTS.md`, and `E2E_TEST_RESULTS.md` are committed validation reports.
 - `handover/SHA256SUMS.txt` covers the skill package files.
@@ -28,7 +28,7 @@ python3 -I tests/run_fixture_tests.py
 
 `validate_handover.py` checks required files, frontmatter keys, code-fence balance, local Markdown links, truncation markers, and Python syntax. It prints a Markdown report and exits non-zero on errors.
 
-`run_fixture_tests.py` runs 82 cases against `handover/scripts/handover.py` in temporary git and non-git projects. It prints a Markdown report and exits non-zero on failures. There is no single-case flag; run the full suite, or temporarily narrow the `tests` list in `tests/run_fixture_tests.py` when debugging one case.
+`run_fixture_tests.py` runs 93 cases against `handover/scripts/handover.py` in temporary git and non-git projects. It prints a Markdown report and exits non-zero on failures. There is no single-case flag; run the full suite, or temporarily narrow the `tests` list in `tests/run_fixture_tests.py` when debugging one case.
 
 ### Helper CLI
 
@@ -39,11 +39,17 @@ python3 -I handover/scripts/handover.py fingerprint --root <project> --task <id>
 python3 -I handover/scripts/handover.py check --root <project> --task <id> --task-file <task.md>
 python3 -I handover/scripts/handover.py status-guard --root <project> --task <id> [--task-file <task.md>]
 python3 -I handover/scripts/handover.py ignore-check --root <project>
+python3 -I handover/scripts/handover.py task-lint --root <project> --task <id> [--task-file <task.md>] [--require-seal] [--require-project-context] [--json]
+python3 -I handover/scripts/handover.py seal --root <project> --task <id> [--task-file <task.md>]
+python3 -I handover/scripts/handover.py goal-guard --root <project> --task <id> --old-file <old> --new-file <new> [--goal-change-authorised]
+python3 -I handover/scripts/handover.py entry-lint --root <project> [--json]
 python3 -I handover/scripts/handover.py stats --root <project> --task <id> [--json]
 python3 -I handover/scripts/handover.py analysis --root <project> [--session <id>] [--context-window <n>] [--json]
 ```
 
-`check` exit codes: `0` = matched, `1` = changed, `2` = unknown or error.
+`check` exit codes: `0` = matched, `1` = changed, `2` = unknown or error, `3` = task body/goal integrity changed.
+
+`goal-guard` exit codes: `0` = goal unchanged or explicitly authorised, `1` = goal changed without authorisation, `2` = unknown/error.
 
 `ignore-check` exit codes: `0` = ok or not a Git work tree, `1` = warning, `2` = unknown or error.
 
@@ -57,7 +63,7 @@ python3 -I tests/run_fixture_tests.py > handover/FIXTURE_TEST_RESULTS.md
 After regenerating the reports or changing any listed skill file:
 
 ```text
-(cd handover && shasum -a 256 CHECKLIST.md E2E_TEST_RESULTS.md FIXTURE_TEST_RESULTS.md README.md SKILL.md SOURCES.md references/analysis.md references/archive-restore.md references/brief-load.md references/data-model.md references/fingerprint.md references/save.md references/task-template.md scripts/handover.py VALIDATION.md > SHA256SUMS.txt && shasum -a 256 -c SHA256SUMS.txt)
+(cd handover && shasum -a 256 CHECKLIST.md E2E_TEST_RESULTS.md FIXTURE_TEST_RESULTS.md README.md SKILL.md SOURCES.md references/analysis.md references/archive-restore.md references/brief-load.md references/data-model.md references/fingerprint.md references/save.md references/task-template.md references/token-hygiene.md scripts/handover.py VALIDATION.md > SHA256SUMS.txt && shasum -a 256 -c SHA256SUMS.txt)
 ```
 
 `E2E_TEST_RESULTS.md` is manual; update it only after a real Claude Code run, and sanitize local paths/model names before committing.

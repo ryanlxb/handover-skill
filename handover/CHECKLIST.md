@@ -1,4 +1,4 @@
-# v1.1.2 验收清单
+# v1.2.0 验收清单
 
 以下为建议测试，不代表已在你的 Claude Code 中执行。结构/静态检查结果见 `VALIDATION.md`；端到端验收需另行执行。
 
@@ -156,3 +156,30 @@
 120. `.handover/config.yaml` 或自动发现的 transcript 符号链接指向项目外时不读取；config 使用默认 `stale_after_days` 并告警，transcript 报告未找到。
 121. 保留字 save/load/brief/list/archive/restore/analysis 在 `fingerprint`/`check`/`status-guard`/`stats` 层被拒绝。
 122. `fingerprint`/`check` 分别报告 `content_hashed_files`、`git_status_dirs`、`coverage_note`；文档明确目录范围只筛选 git status，不等于目录内所有文件内容已校验；`check` 不哈希任务正文。
+
+## v1.2 质量封存与目标 guard
+
+123. 新建任务正文缺少“项目上下文/快速接手摘要/目标与边界/当前进度/下一步/接手必读”任一项时，`seal` exit 1，`save` 不宣称成功。
+124. 任务正文为空、目标是空、或 `## 下一步` 为空时，`seal`/`task-lint` exit 1，并指出具体章节。
+125. `seal` 写入 `body_sha256`/`goal_sha256` 后，`task-lint --require-seal` exit 0；`check` 报告 `task_body: matched`、`task_goal: matched`。
+126. `seal` 后手动修改任务正文：`check` 输出 `integrity: changed`、`task_body: changed`，exit 3；`consistency` 可以是 matched，但不得宣称正文完整。
+127. `seal` 后手动修改“目标与边界”：`check` 输出 `task_goal: changed`，exit 3。
+128. 旧任务没有 `body_sha256`/`goal_sha256`：`check` 报告 `task_body: unknown`/`task_goal: unknown`，不声称完整，也不因缺少字段误判 changed。
+129. `goal-guard` 比较同一目标：`result: goal-unchanged` exit 0；不同目标：`result: goal-changed` exit 1；带 `--goal-change-authorised` 时 exit 0。
+130. save 复用 active 任务且目标变化：先 `goal-guard`；未授权时停止并提示“新建 task-id 或明确授权”，不得直接覆盖。
+131. 用户明确授权改变当前任务目标时，save 记录授权到“决策与尝试”，并保留旧目标的“已作废”说明。
+132. `check` 的 `task_body`/`task_goal` 为 changed 时，load 必须先对账，不得继续按旧记录执行。
+133. 根目录声明文件使用默认 `scope_root_mode: declared`：新未跟踪根目录文件只计入 `out_of_scope_changes`，`consistency` 仍 matched。
+134. `.handover/config.yaml` 设 `scope_root_mode: direct`：根目录新增未跟踪文件触发 changed；设 `tracked`：已跟踪根目录条目修改触发 changed，新未跟踪文件仍计范围外。
+135. 无效 `scope_root_mode` 告警并使用默认 `declared`。
+136. `check --task-file` 使用相对路径且从子目录调用：按 `--root` 解析，不得因 cwd 不同误报 unknown。
+137. `task-lint` 超过 6k tokens 时 exit 1；4k–6k 只警告；`save` 在超限时先压缩或拆分证据。
+138. `seal` 对符号链接任务文件、项目外路径、损坏 frontmatter 返回 exit 2，不写入。
+139. `goal-guard` 的 old/new 文件必须在项目内；缺少 `## 目标与边界` 时 exit 2，不比较空目标。
+140. `SKILL.md`/`save.md`/`brief-load.md`/`task-template.md`/`data-model.md`/`fingerprint.md` 中的 `body_sha256`/`goal_sha256`/`scope_root_mode`/`task-lint`/`seal`/`goal-guard` 描述与脚本输出一致。
+
+## v1.2 入口与文档一致性
+
+141. `handover.md` 按 `references/entry-template.md` 写：任务列表每行只含 task-id/link/title/status/updated_at，不复制任务摘要。
+142. `entry-lint` 对有效入口 exit 0；任务文件漏登记、死链、重复链接时 exit 1；入口缺失时 exit 2。
+143. 新增/归档/恢复任务后运行 `entry-lint`，入口与 `.handover/` 当前任务一致；归档任务只在归档区链接。

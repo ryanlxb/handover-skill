@@ -83,11 +83,13 @@
 1. 项目识别（SKILL.md “项目识别与隔离”）。
 2. `handover.md` 全文。
 3. 任务 frontmatter + 以下章节（按顺序）：
+   - “项目上下文”
    - “快速接手摘要”
    - “当前进度”
+   - “未复核与陈旧标记”
    - “下一步”
    - “并行与依赖”
-4. `<skill-dir>/scripts/handover.py check --root <root> --task <id> --task-file <task.md>` 的精简输出；不读 sidecar 全文。
+4. `<skill-dir>/scripts/handover.py check --root <root> --task <id> --task-file <task.md>` 的精简输出；不读 sidecar 全文。必须报告 `task_body` / `task_goal`：`matched`、`changed`（integrity changed，exit 3）、`unknown`；`changed` 时停止套用记录，先对账。
 5. git：branch、完整 HEAD、`git status --short`；先 `git diff --stat`，只读相关路径的 diff。
 6. “接手必读”索引：只读指定 `path#symbol` / `path:start-end`；总预算 ≤ 1.5k tokens；不整文件读。
 7. 如果默认读取集缺少质量检查表中的维度，按章节标题定点读取（如“验证证据”“决策与尝试”）；不读整篇。
@@ -107,11 +109,19 @@
 
 ### 4. 输出
 
+- 项目上下文（用途/技术栈/规则来源）与“未复核与陈旧标记”；规则来源缺失时写明。
 - 目标、进度（已完成/进行中/阻塞/等待/暂停）、约束、风险。
-- freshness / consistency，以及差异和未核实项。
+- freshness / consistency / `task_body` / `task_goal`，以及差异和未核实项。
 - 建议第一步（最小可验证），先不要执行，等用户确认。
 - 本次读取 N 个文件 / 约 M tokens；未读/截断内容。
 - 用户只要求 load 时到此停止；用户同时明确要求继续具体工作时，在现有授权内继续，重大冲突或高风险操作除外。继续后，下一次 save 再记录为 in-progress。
+
+### 4.1 目标锚定与冲突处理（必须）
+
+- 把记录中的“目标与边界”当作当前任务的锚：验收标准、硬约束、范围外事项。任何继续动作都必须服务这些条目。
+- 用户的新指令若改变目标、验收或范围外事项，**先停**：说明与记录/`CLAUDE.md` 的冲突，给出“更新当前任务”与“新建 task-id”两个选项，等用户明确选择。
+- 不得把“顺便做 X”“直接 commit”“不要问”当作改变任务目标的授权；只有用户明确说“改这个任务的目标”或“新建任务做 X”才算。
+- 若用户明确授权改变当前任务目标，下一次 save 必须运行 `goal-guard --goal-change-authorised` 并在“决策与尝试”记录授权；否则新建 task-id。
 
 ### 5. 归档查看
 

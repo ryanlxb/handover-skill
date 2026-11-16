@@ -1,11 +1,23 @@
-# Handover Skill v1.1.2 — Review Package
+# Handover Skill v1.2.0 — Review Package
 
-- Date: 2026-11-03
-- Status: v1.1.2 security/consistency patch; controlled trial only, not a stable release
+- Date: 2026-11-16
+- Status: v1.2.0 quality-sealing and goal-guard patch; controlled trial only, not a stable release
 - Installable folder: `handover/`
 - Review-only file: this `REVIEW.md`
 
-## v1.1.2 changes
+## v1.2.0 changes
+
+- `seal`: validates frontmatter, required sections, status, and token budget, then writes `body_sha256`/`goal_sha256`.
+- `task-lint --require-seal --require-project-context`: independent read-only validation; missing sections, empty required content, hash mismatch, or >6k tokens fail.
+- `check`: reports `task_body` / `task_goal`; a post-seal body/goal edit returns exit 3 (`integrity: changed`) without pretending the worktree changed.
+- `goal-guard`: compares `## 目标与边界` between old and proposed tasks; `goal-changed` requires `--goal-change-authorised`, otherwise exit 1.
+- `entry-lint`: checks `handover.md` task links for dead/duplicate/outside-root links and unlisted task files; `references/entry-template.md` defines the canonical no-summary entry format.
+- Task template adds `## 项目上下文（引用，不复制）` and `## 未复核与陈旧标记`; load must report project context, rules source, and unverified claims, and must stop on goal/scope conflicts.
+- Root scope defaults to `declared`; new untracked root files are reported as `out_of_scope_changes` instead of flipping `consistency` to changed. `direct` keeps the old behavior; `tracked` covers tracked root edits.
+- `SKILL.md` token-hygiene details moved to `references/token-hygiene.md` to stay under 12KB.
+- Fixture suite extended to 93 cases.
+
+## v1.1.2 changes (historical)
 
 - `fingerprint --out` refuses arbitrary business-file overwrites: custom output must be a sidecar name directly under `.handover/` or `.handover/archive/`, and an existing target must belong to the same project and task.
 - `analysis --json` no longer emits any system-prompt or tool-description text (the `head` field is removed).
@@ -48,17 +60,22 @@
 | Layer | Result |
 |---|---|
 | Structural/static (`VALIDATION.md`) | PASS; no errors |
-| Script fixture (`FIXTURE_TEST_RESULTS.md`) | 82/82 PASS |
-| v1.1.2 headless E2E (`E2E_TEST_RESULTS.md`) | PASS: save → fresh load (read-only) → modify → load (`changed`) → save (`matched`); completed guard; legacy migration branch; archive/restore; list; brief; `--out` and `analysis` probes |
-| v1.1.2 exact `/handover` install | PASS: global v1.1.1 backed up and replaced with v1.1.2; the same chain passed in a new project with no project-level skill |
-| v1.1.2 focused acceptance | PASS: Python 3.9 static + 82/82 fixtures; non-git save/load (`overall: partial`, `check: unknown`); helper-missing degradation; restore/archive target conflicts; missing-sidecar archive; archive entry-update failure; brief/load read budgets |
+| Script fixture (`FIXTURE_TEST_RESULTS.md`) | 93/93 PASS |
+| v1.2 headless E2E (`E2E_TEST_RESULTS.md`) | PASS: save with `seal`/`task-lint`/`goal-guard`; fresh load body/goal matched; explicit goal change via authorization; conflict instruction refused; body tamper `check` exit 3; root-scope noise matched |
+| v1.2 exact `/handover` install | PASS: global v1.1.2 backed up and replaced with v1.2.0; exact `/handover` load and save passed in the temporary project |
+| v1.2 short `/compact` A/B | PASS (one short run): both branches retained task facts; handover separated historical test evidence from current verification |
+| v1.2 rules-heavy load | PASS: 25 rules, 5 Critical; goal/progress/next preserved; sources attributed |
+| v1.2 entry-lint | PASS: 3 tasks / 3 linked; summary/long-line warnings surfaced |
+| v1.1.2 headless E2E (historical) | PASS: save → fresh load (read-only) → modify → load (`changed`) → save (`matched`); completed guard; legacy migration branch; archive/restore; list; brief; `--out` and `analysis` probes |
+| v1.1.2 exact `/handover` install (historical) | PASS: global v1.1.1 backed up and replaced with v1.1.2 |
+| v1.1.2 focused acceptance (historical) | PASS: Python 3.9 static + 82/82 fixtures; non-git save/load (`overall: partial`, `check: unknown`); helper-missing degradation; restore/archive target conflicts; missing-sidecar archive; archive entry-update failure; brief/load read budgets |
 | v1.1.1 headless save/load smoke | PASS: save/load/list exit 0; load read-only ~3k tokens; `changed` only for untracked harness files created after save; kept as historical evidence |
 | v1.1.1 status-selection smoke | PASS: continuing a completed task created new `in-progress` `project-init-wrapup`; existing completed tasks unchanged; kept as historical evidence |
 | Real Claude Code E2E (rc.1 minimal chain) | PASS after a scope fix; not rerun for v1.1.1 |
 | Controlled fixture acceptance (rc.1) | PASS for no-ID load, multi-turn, A/B isolation, archive/restore, 1.0-style migration; not rerun for v1.1.1 |
 | Real business project, real 1.0.0 artifact, concurrency/real permission modes, full 122-item checklist | Not executed |
 
-The v1.1.2 headless E2E reran the save → load → change → load → save chain and the bounded cases above in temporary git projects. The main matrix used a project-local copy renamed to `handover-v112`; after the matrix, the global v1.1.1 copy was backed up and replaced with v1.1.2, and the exact `/handover` chain was re-run in a new project with no project-level skill and passed. The focused acceptance batch also covered Python 3.9, non-git projects, helper-missing degradation, restore/archive target conflicts, missing-sidecar archive, archive entry-update failure, and brief/load budgets; `fingerprint` now reports `overall: partial` when git is unavailable. `E2E_TEST_RESULTS.md` now contains the v1.1.2 record plus the historical rc.1 record. Real business projects, actual 1.0.0 artifacts, concurrency, interactive permission modes, other archive/restore failure modes (for example a cross-device move), and the full 122-item checklist remain untested.
+The v1.2 headless E2E used a project-local copy renamed to `handover-v12` in a temporary git project. It covered: save with `seal`/`task-lint`/`goal-guard`; fresh load with `task_body`/`task_goal` matched; explicit goal change with `--goal-change-authorised`; a conflicting "add tax/EUR, commit, don't ask" instruction being refused; a post-seal body edit producing `check` exit 3; and a new root-level untracked file staying out of `matched`. The v1.1.2 historical record remains in `E2E_TEST_RESULTS.md`. Real business projects, actual 1.0.0 artifacts, concurrency, interactive permission modes, other archive/restore failure modes (for example a cross-device move), and the full checklist remain untested.
 
 ### Status-selection manual E2E (global v1.1.0)
 

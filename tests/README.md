@@ -18,7 +18,7 @@ Checks required files, frontmatter keys, code-fence balance, local Markdown link
 python3 -I tests/run_fixture_tests.py
 ```
 
-Runs 82 fixture cases against `handover/scripts/handover.py` in temporary git and non-git projects:
+Runs 93 fixture cases against `handover/scripts/handover.py` in temporary git and non-git projects:
 
 - matched baseline;
 - snapshot binding mismatch;
@@ -41,6 +41,12 @@ Runs 82 fixture cases against `handover/scripts/handover.py` in temporary git an
 - `ignore-check` warning when ignore rules are missing;
 - `ignore-check` warning when task data is tracked even if ignore rules exist;
 - `ignore-check` not-git when the project is not a Git work tree.
+- `task-lint`/`seal` required-section, minimum-contract (当前阶段/验收/进度状态/下一步动作), project-context, body/goal-hash, and token-budget checks;
+- `check` exit 3 when the task body is edited after sealing;
+- `goal-guard` unchanged/changed/authorised branches;
+- `entry-lint` valid entry, unlisted task, duplicate/dead links, summary/long-line warning;
+- relative `--task-file` resolution from a subdirectory;
+- `scope_root_mode` config (`direct`) and default `declared` behavior.
 
 The script prints a Markdown report. It exits non-zero if any case fails.
 

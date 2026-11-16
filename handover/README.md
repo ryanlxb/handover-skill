@@ -1,6 +1,6 @@
 # Handover Skill
 
-版本：1.1.2
+版本：1.2.0
 
 用途：把当前会话的任务状态保存到项目本地，让新会话核验后继续，或只加载背景开始新任务。不是聊天记录备份，也不是代码备份。
 
@@ -21,7 +21,7 @@
 
 最终必须存在 `.../skills/handover/SKILL.md`。不要再套一层 handover。若已有同名 Skill，先自行备份再替换。
 
-**安装 1.1.2 时建议先备份现有 Skill；若要并行试用，可用项目级安装或临时改 name，不要直接覆盖正在使用的稳定版。**
+**安装 1.2.0 时建议先备份现有 Skill；若要并行试用，可用项目级安装或临时改 name，不要直接覆盖正在使用的稳定版。**
 
 全局与项目级同时存在同名 `handover` 时，先确认 Claude Code 实际解析到哪一份；测试新版本前替换或移除旧副本，避免项目级副本未生效而继续调用全局旧版。
 
@@ -39,6 +39,12 @@
 /handover restore login-20261102t103000z
 /handover load --archived login-20261102t103000z
 /handover analysis
+
+# helper commands (run from the installed skill's scripts/ directory)
+python3 -I scripts/handover.py task-lint --root <project> --task login
+python3 -I scripts/handover.py seal --root <project> --task login --task-file .handover/login.md
+python3 -I scripts/handover.py goal-guard --root <project> --task login --old-file .handover/login.md --new-file .handover/login.proposed.md
+python3 -I scripts/handover.py entry-lint --root <project>
 ```
 
 - save：保存当前会话中该任务的目标、状态和证据，不保存完整窗口。成功后输出精确的 `/handover load <task-id>`。
@@ -51,6 +57,16 @@
 - 不带参数默认 save；不带 ID 的 load 仅在“唯一 in-progress 任务且 freshness=fresh”时自动选择；多个 in-progress、stale/unknown、或只有 pending/blocked/paused 时列候选，不自动选择；只有 completed/cancelled/归档（或没有任何任务）时提示没有进行中任务。fresh 只允许自动选择，不跳过 consistency 核验，也不自动开发。
 - task-id 允许 1–64 位小写字母、数字和短横线，首位必须是字母或数字。保留字 save/load/brief/list/archive/restore/analysis 不能作为 task-id。
 - `/handover login` 是 `/handover save login` 的简写。
+
+## 质量封存与目标 guard（v1.2）
+
+- `save` 写任务文件后必须运行 `seal`：它校验 frontmatter、必需章节（项目上下文、快速接手摘要、目标与边界、当前进度、下一步、接手必读）、最低交接契约（当前阶段、验收、进度状态、下一步动作）、status 和 token 上限，并写入 `body_sha256` / `goal_sha256`。
+- `task-lint --require-seal --require-project-context` 独立复核；缺章节、正文为空、哈希不匹配或超过 6k tokens 时 exit 1，`save` 必须停止。
+- `check` 现在报告 `task_body` / `task_goal`：`matched`、`changed`（integrity changed，exit 3）、`unknown`。正文/目标在 seal 后被改写时，`consistency` 可能仍是 matched，但 `check` 以 exit 3 明确失败。
+- `goal-guard` 比较旧任务与 proposed 任务的 `## 目标与边界`：目标变化时 exit 1；只有用户明确授权改变当前任务目标，才用 `--goal-change-authorised`，否则新建 task-id。
+- `entry-lint` 检查 `handover.md` 的任务链接：死链、重复、项目外路径、任务文件漏登记；过长/摘要列会告警。入口格式见 `references/entry-template.md`（不带任务摘要）。
+- 任务模板新增“项目上下文（引用，不复制）”和“未复核与陈旧标记”；`load` 必须报告项目上下文、规则来源和未复核项。
+- 根目录 scope 默认 `declared`：显式声明的根目录文件仍会被内容哈希；新未跟踪根目录文件只计入 `out_of_scope_changes`，不再让 `consistency` 因日志/coverage 噪声变成 changed。需要旧的全部直属条目行为时设 `scope_root_mode: direct`。
 
 ## 上下文预算与按需读取
 
@@ -179,9 +195,10 @@ project-b/
 ```yaml
 # .handover/config.yaml
 stale_after_days: 14
+scope_root_mode: declared  # direct | declared | tracked
 ```
 
-配置不需要 `---` frontmatter 分隔符；无效值会告警并使用默认 14。
+配置不需要 `---` frontmatter 分隔符；无效值会告警并使用默认值（14 / `declared`）。
 - 阈值边界：`age >= stale_after_days` 为 stale；`age < stale_after_days` 为 fresh。
 - `updated_at` 为 null、无法解析或未来时间等异常时为 unknown，不能默认 fresh。
 - `stale` 不覆盖 status，不触发删除。
@@ -196,7 +213,7 @@ stale_after_days: 14
 
 - 保存时记录声明范围内文件的内容 SHA-256，以及相关 git 现场（branch、HEAD、status 条目），写入 `.handover/<task-id>.fingerprint.json`；sidecar 的 SHA-256 写入任务 frontmatter 的 `fingerprint_sha256`。
 - 声明范围 = 任务相关文件 + `接手必读` 路径 + 显式提到路径 + 这些路径所在目录；排除 `.handover/`、`handover.md`、`.claude/` 和 `.git/`，避免 save 自己或 Skill 安装目录改变现场。当前版本默认排除整个 `.claude/`：`.claude/` 下的项目配置变化不在一致性检查范围内；这不是“所有项目配置都不属于任务现场”的断言。
-- 目录范围：子目录按子树覆盖；项目根目录按直属文件覆盖（不递归），避免一个根目录文件把整个仓库都算进 matched。`--scope-dir .` 表示根目录直属文件。
+- 目录范围：子目录按子树覆盖；根目录由 `scope_root_mode` 控制。`direct` 匹配所有根目录直属条目；`declared`（默认）只匹配显式声明的根目录文件；`tracked` 额外匹配已跟踪根目录条目的修改。新未跟踪根目录文件默认只计入 `out_of_scope_changes`，避免日志/coverage 噪声。`--scope-dir .` 仍表示根目录直属文件。
 - git 现场覆盖声明范围内的新增、删除、重命名、暂存/未暂存状态变化；范围外改动只计数，不参与 matched 判断。`matched` 输出会报告 `out_of_scope_changes`，避免把“声明范围一致”误读为“整个项目无变化”。
 - 任务 frontmatter 与 sidecar 共享 `snapshot_id`。`check` 先核对 `schema`、`task_id`、`project_root`、`snapshot_id`、`fingerprint_file`、`fingerprint_sha256` 是否属于同一次保存/同一项目；任一缺失或不匹配 → unknown。正文已更新但指纹仍是旧值时，不会伪装成 matched。
 - 没有任何可声明文件时拒绝生成空基线；不得出现“0 文件 matched”。sidecar 输出路径是符号链接、或默认 `.handover` 是符号链接时，`fingerprint` 拒绝写入，避免覆盖业务文件。
@@ -266,6 +283,16 @@ stale_after_days: 14
 - `stale_after_days` 必须是合法正整数；无效配置告警后使用默认 14。
 - 模板中的示例日期仅作格式示例，不得原样写入真实任务。
 
+## v1.2.0 质量封存与目标 guard
+
+- `seal`：校验任务 frontmatter、必需章节、status 和 token 上限，写入 `body_sha256`/`goal_sha256`；`task-lint --require-seal --require-project-context` 独立复核。
+- `check`：报告 `task_body`/`task_goal`；正文/目标在 seal 后被改写时返回 exit 3（integrity changed），不把正文编辑伪装成现场 changed；旧任务无 seal 字段时为 unknown。
+- `goal-guard`：覆盖 active 任务前比较 `## 目标与边界`；目标变化 exit 1，只有显式 `--goal-change-authorised` 才允许；授权记录在“决策与尝试”。
+- 任务模板新增“项目上下文（引用，不复制）”和“未复核与陈旧标记”；`load` 必须报告项目上下文、规则来源、未复核项，并在新指令冲突时停下给出“更新当前任务/新建任务”选项。
+- 根目录 scope 默认 `declared`：新未跟踪根目录文件只计入 `out_of_scope_changes`；`direct` 恢复旧行为，`tracked` 额外覆盖已跟踪根目录条目。
+- `SKILL.md` 的 Token 效率原则移到 `references/token-hygiene.md`，为质量封存说明腾出空间。
+- v1.2 fixture：93/93 PASS；headless E2E：save/seal/lint → fresh load（body/goal matched）→ 显式目标变更 → 冲突指令拒绝 → 正文篡改 check exit 3 → 根目录噪声仍 matched。
+
 ## v1.1.2 安全与一致性修补
 
 - `fingerprint --out` 不再能覆盖任意业务文件：默认只写 `.handover/<task-id>.fingerprint.json`；自定义输出仅允许 `.handover/` 或 `.handover/archive/` 下的 sidecar 文件名，且目标必须已是同项目、同 task-id 的合法 sidecar。
@@ -277,18 +304,24 @@ stale_after_days: 14
 - 重复 task-id 的所有副本都进入 EXCEPTIONS，不再由文件顺序决定哪份保持 ACTIVE。
 - `read_stale_days` 不再读取指向项目外的 config 符号链接。
 - 保留字（save/load/brief/list/archive/restore/analysis）在 helper 层统一拒绝。
-- `fingerprint`/`check` 输出分别报告 `content_hashed_files` 和 `git_status_dirs`；文档明确：目录范围只筛选 git status，不保证目录内未列出文件的内容；`check` 不哈希任务正文。
+- `fingerprint`/`check` 输出分别报告 `content_hashed_files` 和 `git_status_dirs`；文档明确：目录范围只筛选 git status，不保证目录内未列出文件的内容。v1.2 起 `check` 通过 `body_sha256`/`goal_sha256` 单独报告任务正文/目标完整性。
 
-## 待验证项（v1.1.2）
+## 待验证项（v1.2.0）
 
-- 模板路径：`SKILL.md` 不再内联模板内容；`references/save.md` 通过相对路径 `task-template.md` 引用，`SKILL.md` 通过 Markdown 链接路由到 `references/`。v1.1.2 headless E2E 已用 reference-routed save/load/change 链路验证；模板读取仍建议在安装方式变化后单独检查。若失败，按 harness 给出的 Skill base directory 解析。
-- 文档长度：初始 draft 不设硬性限制；后续观察到 `brief`/`load` 上下文成本过高，现已改为按需读取 + 软性预算（任务文档建议 ≤ 200 行 / ≤ 4k tokens；`SKILL.md` ≤ 12KB）。该预算不改变任务语义，只限制默认读取范围。
-- 固定 token 阈值：本版本不采用；60% 仅作个人提醒。
-- archive/restore 仍是指令型操作，尚未脚本化；记录组规则已写明，但文件移动与入口更新的真实失败行为需在端到端验收中确认。
+- exact `/handover` 全局安装冒烟：已在临时项目通过 load/save；替换全局副本后建议在真实项目再跑一次。
+- 真实业务项目：长会话、多规范、`CLAUDE.md` 很大、任务频繁切换。
+- 与 `/compact` 的 A/B：同一任务比较目标保持、事实准确率、下一步可执行性、上下文成本。
+- `goal-guard`/`task-lint`/`seal` 是 helper；若模型跳过命令，skill 本身没有 hook 强制阻断。需要确定性时，应把 save 绑定到这些命令的退出码。
+
+## 有意延后（v1.2.0 未实现）
+
+- 并发写锁：仍是“无锁 + 安全写入 + 冲突报告”，单用户手动流程优先；多写者场景未支持。
+- archive/restore 脚本化：仍保持指令型记录组规则；脚本化文件移动/入口更新涉及数据丢失风险，留待独立版本。
+- `analysis` 的外部 transcript 清理/压缩：只读审计，不自动修改会话。
 
 ## 测试声明
 
-当前完成设计评审、结构/静态检查、脚本 fixture 测试（v1.1.2：82/82，Python 3.9 与 3.12）、v1.1.0 headless brief E2E（临时项目，读取约 0.7k tokens，未读完整任务正文）、v1.1.1 headless save/load 与 status-selection 冒烟、v1.1.2 headless E2E（主体矩阵在临时 git 项目中使用改名副本 `handover-v112`；随后备份并替换全局 v1.1.1 为 v1.1.2，在无项目级 skill 的新临时项目复验 exact `/handover`：save → 新会话 load（只读、哈希不变）→ 修改 → load（changed）→ save（新基线 matched））、聚焦验收（非 Git 项目 `overall=partial`/`check=unknown`、helper 缺失降级、restore/archive 目标冲突、sidecar 缺失归档、archive 入口更新失败、brief/load 读取预算），以及 rc.1 时期的受控夹具验收（无 ID load 矩阵、多轮交接、A/B 隔离、archive/restore、1.0 风格迁移）；结果见 `VALIDATION.md`、`FIXTURE_TEST_RESULTS.md`、`E2E_TEST_RESULTS.md`。v1.1.2 E2E 只覆盖一个环境与多个临时项目；真实业务项目、真实 1.0.0 制品、并发/真实权限模式、其他 archive/restore 失败模式（如跨设备移动）与完整 122 项 checklist 尚未执行，不能把已有结果当作完整端到端通过。
+当前完成结构/静态检查、脚本 fixture 测试（v1.2.0：93/93，Python 3.12），以及 v1.2 headless E2E：在临时 Git 项目中使用改名副本 `handover-v12`，验证 save 的 `seal`/`task-lint`/`goal-guard`、fresh load（`task_body`/`task_goal` matched）、显式目标变更、冲突指令拒绝、正文篡改 `check` exit 3、根目录噪声仍 matched、25 条规则/5 条 Critical 的 rules-heavy 加载；结果见 `VALIDATION.md`、`FIXTURE_TEST_RESULTS.md`、`E2E_TEST_RESULTS.md`。历史 v1.1.2 E2E（82/82 fixture、exact `/handover`、非 Git、helper 缺失、archive/restore 冲突、brief/load 预算）仍保留在报告里，不代表 v1.2 已在真实业务项目验证。真实业务项目、真实 1.0.0 制品、并发/真实权限模式、其他 archive/restore 失败模式（如跨设备移动）与完整 checklist 尚未执行，不能把已有结果当作完整端到端通过。
 
 - `SHA256SUMS.txt` 只证明列入清单的文件与对应摘要一致，不证明逻辑正确、安装成功、权限安全或真实行为。
 - 截断标记检查是启发式，不等于自然语言绝无残句；聊天输出可能被截断，以磁盘文件和真实调用结果为准。
@@ -317,9 +350,11 @@ stale_after_days: 14
 - `references/data-model.md`：数据布局、task-id、YAML、状态轴、旧格式迁移。
 - `references/fingerprint.md`：指纹与忽略检查。
 - `references/analysis.md`：只读 context 审计的步骤、报告格式和安全边界。
+- `references/token-hygiene.md`：Token 效率原则（从 SKILL.md 移出，按需读取）。
+- `references/entry-template.md`：`handover.md` 入口格式与 `entry-lint` 规则。
 - `CHECKLIST.md`：首次使用验收场景。
 - `SOURCES.md`：官方参考链接。
-- `scripts/handover.py`：可选的 list / fingerprint / check / status-guard / ignore-check / stats / analysis 工具。
+- `scripts/handover.py`：可选的 list / fingerprint / check / status-guard / ignore-check / task-lint / seal / goal-guard / stats / analysis 工具。
 - `VALIDATION.md`：结构/静态检查结果。
 - `FIXTURE_TEST_RESULTS.md`：脚本 fixture 测试结果（与 Claude Code 端到端测试分开）。
 - `E2E_TEST_RESULTS.md`：Claude Code 真实 save/load/change 链路结果（与 fixture 测试分开）。
